@@ -49,6 +49,7 @@ public:
     void on_retype(unsigned index, std::string str);
     void on_rename(unsigned index, std::string str);
     void on_color(wxColourPickerEvent& event);
+    void on_macro(wxCommandEvent& event);
 
     void load();
 
@@ -60,6 +61,7 @@ private:
     std::shared_ptr<object_class_t> oc;
     std::deque<std::unique_ptr<field_def_t>> field_defs;
     wxBoxSizer* field_sizer;
+    wxTextCtrl* macro;
 };
 
 

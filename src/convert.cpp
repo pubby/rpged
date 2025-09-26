@@ -26,7 +26,7 @@ std::vector<attr_bitmaps_t> chr_to_bitmaps(std::uint8_t const* data, std::size_t
 {
     std::vector<attr_bitmaps_t> ret;
 
-    size = std::min<std::size_t>(size, 16*256);
+    //size = std::min<std::size_t>(size, 16*256);
 
     for(unsigned i = 0; i < size; i += 16)
     {
@@ -60,9 +60,9 @@ std::vector<attr_bitmaps_t> chr_to_bitmaps(std::uint8_t const* data, std::size_t
     return ret;
 }
 
-std::pair<std::vector<bitmap_t>, std::vector<wxBitmap>> load_collision_file(wxString const& string)
+std::pair<std::vector<bitmap_t>, std::vector<wxBitmap>> load_collision_file(wxString const& string, unsigned scale)
 {
-    if(string.IsEmpty())
+    if(string.IsEmpty() || scale == 0)
         return {};
 
     std::pair<std::vector<bitmap_t>, std::vector<wxBitmap>> ret;
@@ -72,11 +72,11 @@ std::pair<std::vector<bitmap_t>, std::vector<wxBitmap>> load_collision_file(wxSt
     if(!base.IsOk())
         return {};
 
-    for(coord_t c : dimen_range({8, 8}))
+    for(coord_t c : dimen_range({4, 64}))
     {
         wxImage tile = base.Copy();
-        //wxImage tile(string);
-        tile.Resize({ 16, 16 }, { c.x * -16, c.y * -16 }, 255, 0, 255);
+        unsigned const s = 8 * scale;
+        tile.Resize({ s, s }, { c.x * -s, c.y * -s }, 255, 0, 255);
 #ifdef GC_RENDER
         ret.first.emplace_back(get_renderer()->CreateBitmapFromImage(tile));
 #else

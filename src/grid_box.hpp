@@ -27,7 +27,6 @@ enum
 {
     TAB_CHR,
     TAB_PALETTE,
-    TAB_METATILES,
     TAB_LEVELS,
     TAB_CLASSES,
 };
@@ -291,7 +290,7 @@ public:
     editor_t& editor();
 
     virtual void resize() override { grid_resize(selector().dimen()); }
-    virtual dimen_t tile_size() const { return layer().tile_size(); }
+    virtual dimen_t tile_size() const { return layer().tile_size(model); }
 
     virtual bool enable_tile_select() const { return true; }
 
@@ -335,6 +334,7 @@ protected:
 
     virtual void post_update() {}
 
+    virtual void on_dropper(std::uint16_t) {}
     virtual void on_down(mouse_button_t mb, coord_t at) override;
     virtual void on_up(mouse_button_t mb, coord_t mouse_end) override;
     virtual void on_motion(coord_t at) override;

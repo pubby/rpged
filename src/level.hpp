@@ -18,8 +18,6 @@
 
 using namespace i2d;
 
-void draw_metatile(level_model_t const& model, render_t& gc, std::uint8_t tile, coord_t at);
-
 class object_field_t : public wxPanel
 {
 public:
@@ -83,27 +81,22 @@ private:
     object_editor_t* editor;
 };
 
-class metatile_picker_t : public selector_box_t
+void draw_chr_tile(level_model_t const& model, render_t& gc, std::uint16_t tile, std::uint8_t attribute, coord_t at);
+void draw_collision_tile(model_t const& model, render_t& gc, std::uint8_t tile, coord_t at);
+
+class chr_picker_t : public selector_box_t
 {
 public:
-    metatile_picker_t(wxWindow* parent, model_t& model, std::shared_ptr<level_model_t> level)
+    chr_picker_t(wxWindow* parent, model_t& model, std::shared_ptr<level_model_t> level)
     : selector_box_t(parent, model)
-    , level(level)
-    {
-        scale = 1;
-        resize();
-    }
+    , level(std::move(level))
+    { resize(); }
 
 private:
     std::shared_ptr<level_model_t> level;
 
     virtual tile_model_t& tiles() const override { return *level; }
-
-    virtual void draw_tile(render_t& gc, unsigned tile, coord_t at) override 
-    { 
-        draw_metatile(*level, gc, tile, at); 
-    }
-    virtual void draw_tiles(render_t& gc) override;
+    virtual void draw_tile(render_t& gc, unsigned tile, coord_t at) override;
 };
 
 
@@ -117,13 +110,13 @@ public:
 
     virtual void draw_tile(render_t& gc, unsigned tile, coord_t at) override 
     { 
-        draw_metatile(*level, gc, tile, at); 
+        draw_chr_tile(*level, gc, tile & 0x3FFF, tile >> 14, at); 
     }
     virtual void draw_tiles(render_t& gc) override;
 
     coord_t crop(coord_t at)
     {
-        return ::crop(at, to_rect(vec_mul(level->metatile_layer.tiles.dimen(), 16)));
+        return ::crop(at, to_rect(vec_mul(level->chr_layer.tiles.dimen(), 16)));
     }
 
     double object_radius() const { return 8.0f; }
@@ -131,8 +124,9 @@ public:
     virtual void on_down(mouse_button_t mb, coord_t at) override;
     virtual void on_up(mouse_button_t mb, coord_t at) override;
     virtual void on_motion(coord_t at) override;
+    virtual void on_dropper(std::uint16_t) override;
 
-    virtual bool enable_tile_select() const { return level->current_layer == TILE_LAYER; }
+    virtual bool enable_tile_select() const { return level->current_layer != OBJECT_LAYER; }
 
 private:
     std::shared_ptr<level_model_t> level;
@@ -155,20 +149,21 @@ public:
     level_model_t& level_model() { return *level; }
     auto ptr() { return level.get(); }
 
+    void on_active(unsigned i);
+
     model_t& model;
 private:
     std::shared_ptr<level_model_t> level;
 
-    metatile_picker_t* picker;
+    chr_picker_t* picker;
     level_canvas_t* canvas;
     wxSpinCtrl* palette_ctrl;
     wxSpinCtrl* width_ctrl;
     wxSpinCtrl* height_ctrl;
     wxPanel* object_panel;
-    wxComboBox* metatiles_combo;
     wxComboBox* chr_combo;
     wxTextCtrl* macro_ctrl;
-    std::array<wxRadioButton*, 2> layers;
+    std::array<wxRadioButton*, 6> layers;
     object_editor_t* object_editor;
 
     int last_palette = -1;
@@ -184,21 +179,18 @@ private:
     void on_change_height(wxSpinEvent& event);
     void on_macro_name(wxCommandEvent& event);
 
-    void on_metatiles_select(wxCommandEvent& event);
-    void on_metatiles_text(wxCommandEvent& event);
     void on_chr_select(wxCommandEvent& event);
     void on_chr_text(wxCommandEvent& event);
     void on_delete(wxCommandEvent& event);
 
     template<unsigned I>
     void on_active(wxCommandEvent& event) { on_active(I); }
-    void on_active(unsigned i);
 
     virtual void select_all(bool select = true) override;
     virtual void select_invert() override;
 public:
     void model_refresh();
-    void load_metatiles();
+    void load_chr();
 };
 
 struct level_policy_t

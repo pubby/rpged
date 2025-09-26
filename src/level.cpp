@@ -2,15 +2,26 @@
 
 #include <ranges>
 
-void draw_metatile(level_model_t const& model, render_t& gc, std::uint8_t tile, coord_t at)
+void draw_chr_tile(level_model_t const& model, render_t& gc, std::uint16_t tile, std::uint8_t attribute, coord_t at)
 {
-    if(tile < model.metatile_bitmaps.size())
-#ifdef GC_RENDER
-        gc.DrawBitmap(model.metatile_bitmaps[tile], at.x, at.y, 16, 16);
-#else 
-        gc.DrawBitmap(model.metatile_bitmaps[tile], { at.x, at.y });
+    if(tile < model.chr_bitmaps.size())
+#if GC_RENDER
+        gc.DrawBitmap(model.chr_bitmaps[tile][attribute], at.x, at.y, 8, 8);
+#else
+        gc.DrawBitmap(model.chr_bitmaps[tile][attribute], { at.x, at.y });
 #endif
 }
+
+void draw_collision_tile(model_t const& model, render_t& gc, std::uint8_t tile, coord_t at)
+{
+    if(tile < model.collision_bitmaps.size())
+#if GC_RENDER
+        gc.DrawBitmap(model.collision_bitmaps[tile], at.x, at.y, 8 * model.collision_scale(), 8 * model.collision_scale());
+#else
+        gc.DrawBitmap(model.collision_bitmaps[tile], { at.x, at.y });
+#endif
+}
+
 
 ////////////////////////////////////////////////////////////////////////////////
 // object_field_t //////////////////////////////////////////////////////////////
@@ -321,10 +332,19 @@ object_dialog_t::object_dialog_t(wxWindow* parent, model_t& model, object_t& obj
 // metatile_picker_t //////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 
-void metatile_picker_t::draw_tiles(render_t& gc)
-{
-    selector_box_t::draw_tiles(gc);
+void chr_picker_t::draw_tile(render_t& gc, unsigned tile, coord_t at)
+{ 
+    if(level->collisions())
+    {
+        gc.SetPen(wxPen());
+        gc.SetBrush(wxBrush(wxColor(230, 140, 230)));
+        gc.DrawRectangle(at.x, at.y, tile_size().w, tile_size().h);
+        draw_collision_tile(model, gc, tile, at);
+    }
+    else
+        draw_chr_tile(*level, gc, tile & 0x3FFF, level->active, at); 
 }
+
 
 ////////////////////////////////////////////////////////////////////////////////
 // level_canvas_t //////////////////////////////////////////////////////////////
@@ -332,46 +352,44 @@ void metatile_picker_t::draw_tiles(render_t& gc)
 
 void level_canvas_t::draw_tiles(render_t& gc)
 {
+    for(coord_t c : dimen_range(level->chr_layer.tiles.dimen()))
+    {
+        int x0 = c.x * 8 + margin().w;
+        int y0 = c.y * 8 + margin().h;
+
+        unsigned const tile = level->chr_layer.tiles.at(c) & 0x3FFF;
+        unsigned const attribute = level->chr_layer.tiles.at(c) >> 14;
+        draw_chr_tile(*level, gc, tile, attribute, { x0, y0 });
+    }
+
+    for(coord_t c : dimen_range(level->collision_layer.tiles.dimen()))
+    {
+        int x0 = c.x * 8 * model.collision_scale() + margin().w;
+        int y0 = c.y * 8 * model.collision_scale() + margin().h;
+
+        if(level->collisions() || model.show_collisions)
+        {
+            unsigned const tile = level->collision_layer.tiles.at(c);
+            draw_collision_tile(model, gc, tile, { x0, y0 });
+        }
+
+        if(model.show_grid)
+        {
+            gc.SetPen(wxPen(wxColor(255, 0, 255), 0, wxPENSTYLE_DOT));
+            gc.SetBrush(wxBrush());
+            gc.DrawRectangle(x0, y0, 8 * model.collision_scale(), 8 * model.collision_scale());
+        }
+    }
+
+    draw_overlays(gc);
+
     bool const object_select = 
         selecting_objects && mouse_down && model.tool == TOOL_SELECT && level->current_layer == OBJECT_LAYER;
 
-    canvas_box_t::draw_tiles(gc);
+    //canvas_box_t::draw_tiles(gc); // TODO
 
     gc.SetPen(wxPen(wxColor(255, 0, 255), 0, wxPENSTYLE_DOT));
     gc.SetBrush(wxBrush());
-
-    int const x0 = margin().w;
-    int const x1 = margin().w + level->metatile_layer.tiles.dimen().w * 16;
-    int const y0 = margin().h;
-    int const y1 = margin().h + level->metatile_layer.tiles.dimen().h * 16;
-
-    int x_lines = model.level_grid_x ? model.level_grid_x : 16;
-    int y_lines = 0;
-    if(model.level_grid_y)
-        y_lines = model.level_grid_y;
-    else
-    {
-        if(level->metatile_layer.tiles.dimen().h % 16 == 0)
-            y_lines = 16;
-        else if(level->metatile_layer.tiles.dimen().h % 15 == 0)
-            y_lines = 15;
-    }
-
-    for(unsigned x = 1; x < (level->metatile_layer.tiles.dimen().w + x_lines - 1) / x_lines; ++x)
-    {
-        int const x0 = x * (16 * x_lines) + margin().w;
-        draw_line(gc, x0, y0, x0, y1);
-    }
-
-    if(y_lines)
-    {
-        unsigned const y_limit = (level->metatile_layer.tiles.dimen().h + y_lines - 1) / y_lines;
-        for(unsigned y = 1; y < y_limit; ++y)
-        {
-            int const y0 = y * (16 * y_lines) + margin().h;
-            draw_line(gc, x0, y0, x1, y0);
-        }
-    }
 
     // Objects:
 #ifdef GC_RENDER
@@ -387,13 +405,13 @@ void level_canvas_t::draw_tiles(render_t& gc)
 
         if(level->object_selector.count(i))
         {
-            gc.SetPen(wxPen());
-            gc.SetBrush(wxBrush(wxColor(255, 255, 255, 128)));
+            gc.SetPen(wxPen(wxColor(255, 0, 255, 255), 0, wxPENSTYLE_SOLID));
+            gc.SetBrush(wxBrush(wxColor(255, 255, 255, 255)));
         }
         else
         {
-            gc.SetPen(wxPen());
-            gc.SetBrush(wxBrush(wxColor(255, 255, 255, 32)));
+            gc.SetPen(wxPen(wxColor(0, 0, 0, 200), 0, wxPENSTYLE_SOLID));
+            gc.SetBrush(wxBrush(wxColor(255, 255, 255, 200)));
         }
         draw_circle(gc, at.x, at.y, object_radius() * 3 / 2);
     }
@@ -403,7 +421,7 @@ void level_canvas_t::draw_tiles(render_t& gc)
         auto const& object = level->objects[i];
 
         auto style = wxPENSTYLE_SOLID;
-        if(!in_bounds(object.position, vec_mul(level->metatile_layer.tiles.dimen(), 16)))
+        if(!in_bounds(object.position, vec_mul(level->chr_layer.tiles.dimen(), 8)))
             style = wxPENSTYLE_DOT;
 
         rgb_t color = { 120, 120, 120 };
@@ -420,12 +438,12 @@ void level_canvas_t::draw_tiles(render_t& gc)
         if(level->object_selector.count(i))
         {
             gc.SetPen(wxPen(wxColor(color.r, color.g, color.b), 0, style));
-            gc.SetBrush(wxBrush(wxColor(color.r, color.g, color.b, 127)));
+            gc.SetBrush(wxBrush(wxColor(color.r, color.g, color.b, 255)));
         }
         else
         {
             gc.SetPen(wxPen(wxColor(color.r, color.g, color.b, 200), 0, style));
-            gc.SetBrush(wxBrush(wxColor(color.r, color.g, color.b, 60)));
+            gc.SetBrush(wxBrush(wxColor(color.r, color.g, color.b, 200)));
         }
 
         coord_t const at = vec_mul(crop(object.position) + to_coord(margin()), scale);
@@ -439,8 +457,8 @@ void level_canvas_t::draw_tiles(render_t& gc)
         {
             if(auto const* objects = std::get_if<std::vector<object_t>>(&model.paste->data))
             {
-                gc.SetPen(wxPen(wxColor(255, 0, 255, 200), 0, wxPENSTYLE_SOLID));
-                gc.SetBrush(wxBrush(wxColor(255, 255, 0, 127)));
+                gc.SetPen(wxPen(wxColor(255, 0, 255, 255), 0, wxPENSTYLE_SOLID));
+                gc.SetBrush(wxBrush(wxColor(255, 255, 0, 200)));
 
                 for(auto const& object : *objects)
                 {
@@ -641,7 +659,7 @@ void level_canvas_t::on_down(mouse_button_t mb, coord_t at)
 selected:
     Refresh();
 
-    if(level->current_layer == TILE_LAYER)
+    if(level->current_layer != OBJECT_LAYER)
         canvas_box_t::on_down(mb, at);
 }
 
@@ -707,7 +725,7 @@ void level_canvas_t::on_up(mouse_button_t mb, coord_t at)
         }
     }
 
-    if(level->current_layer == TILE_LAYER)
+    if(level->current_layer != OBJECT_LAYER)
         canvas_box_t::on_up(mb, at);
 }
 
@@ -730,6 +748,13 @@ void level_canvas_t::on_motion(coord_t at)
         canvas_box_t::on_motion(at);
 }
 
+void level_canvas_t::on_dropper(std::uint16_t value)
+{
+    level_editor_t* parent = static_cast<level_editor_t*>(GetParent());
+    parent->on_active(value >> 14);
+    parent->Refresh();
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // level_editor_t //////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -740,10 +765,11 @@ level_editor_t::level_editor_t(wxWindow* parent, model_t& model, std::shared_ptr
 , level(level)
 {
     wxPanel* left_panel = new wxPanel(this);
-    picker = new metatile_picker_t(left_panel, model, level);
+    left_panel->SetMinSize(wxSize(256 + 48, 0));
+    picker = new chr_picker_t(left_panel, model, level);
 
     object_panel = new wxPanel(left_panel);
-    object_panel->SetMinSize(wxSize(256 + 16, 0));
+    object_panel->SetMinSize(wxSize(256 + 32, 0));
     object_editor = new object_editor_t(object_panel, model, model.object_picker, true);
     {
         wxBoxSizer* sizer = new wxBoxSizer(wxVERTICAL);
@@ -756,10 +782,6 @@ level_editor_t::level_editor_t(wxWindow* parent, model_t& model, std::shared_ptr
     macro_ctrl = new wxTextCtrl(left_panel, wxID_ANY);
     macro_ctrl->SetValue(level->macro_name);
     macro_ctrl->SetMinSize(wxSize(200, -1));
-
-    auto* metatiles_label = new wxStaticText(left_panel, wxID_ANY, "Metatiles");
-    metatiles_combo = new wxComboBox(left_panel, wxID_ANY);
-    metatiles_combo->SetMinSize(wxSize(200, -1));
 
     auto* chr_label = new wxStaticText(left_panel, wxID_ANY, "CHR");
     chr_combo = new wxComboBox(left_panel, wxID_ANY);
@@ -775,20 +797,27 @@ level_editor_t::level_editor_t(wxWindow* parent, model_t& model, std::shared_ptr
         wxBoxSizer* sizer = new wxBoxSizer(wxHORIZONTAL);
 
         width_ctrl = new wxSpinCtrl(dimensions_panel);
-        width_ctrl->SetRange(1, 256);
+        width_ctrl->SetRange(1, 65535);
         width_ctrl->SetValue(level->dimen().w);
 
         height_ctrl = new wxSpinCtrl(dimensions_panel);
-        height_ctrl->SetRange(1, 256);
+        height_ctrl->SetRange(1, 65535);
         height_ctrl->SetValue(level->dimen().h);
+
+        width_ctrl->SetIncrement(model.collision_scale());
+        height_ctrl->SetIncrement(model.collision_scale());
 
         sizer->Add(width_ctrl, wxSizerFlags().Border(wxRIGHT));
         sizer->Add(height_ctrl, wxSizerFlags());
         dimensions_panel->SetSizer(sizer);
     }
 
-    layers[0] = new wxRadioButton(left_panel, wxID_ANY, "Tile Layer    (F1)", wxDefaultPosition, wxDefaultSize, wxRB_GROUP);
-    layers[1] = new wxRadioButton(left_panel, wxID_ANY, "Object Layer  (F2)");
+    layers[0] = new wxRadioButton(left_panel, wxID_ANY, "Attribute 0   (F1)", wxDefaultPosition, wxDefaultSize, wxRB_GROUP);
+    layers[1] = new wxRadioButton(left_panel, wxID_ANY, "Attribute 1   (F2)");
+    layers[2] = new wxRadioButton(left_panel, wxID_ANY, "Attribute 2   (F3)");
+    layers[3] = new wxRadioButton(left_panel, wxID_ANY, "Attribute 3   (F4)");
+    layers[4] = new wxRadioButton(left_panel, wxID_ANY, "Collisions    (F5)");
+    layers[5] = new wxRadioButton(left_panel, wxID_ANY, "Objects       (F6)");
 
     canvas = new level_canvas_t(this, model, level);
 
@@ -800,8 +829,6 @@ level_editor_t::level_editor_t(wxWindow* parent, model_t& model, std::shared_ptr
             sizer->Add(ptr, wxSizerFlags().Border(wxLEFT));
         sizer->Add(macro_label, wxSizerFlags().Border(wxLEFT | wxUP));
         sizer->Add(macro_ctrl, wxSizerFlags().Border(wxLEFT | wxDOWN));
-        sizer->Add(metatiles_label, wxSizerFlags().Border(wxLEFT));
-        sizer->Add(metatiles_combo, wxSizerFlags().Border(wxLEFT | wxDOWN));
         sizer->Add(chr_label, wxSizerFlags().Border(wxLEFT));
         sizer->Add(chr_combo, wxSizerFlags().Border(wxLEFT | wxDOWN));
         sizer->Add(palette_text, wxSizerFlags().Border(wxLEFT));
@@ -820,11 +847,15 @@ level_editor_t::level_editor_t(wxWindow* parent, model_t& model, std::shared_ptr
     }
 
     // Create an accelerator table with keyboard shortcuts
-    wxAcceleratorEntry entries[3];
+    wxAcceleratorEntry entries[7];
     entries[0].Set(wxACCEL_NORMAL, WXK_F1, ID_LAYER0);
     entries[1].Set(wxACCEL_NORMAL, WXK_F2, ID_LAYER1);
-    entries[2].Set(wxACCEL_NORMAL, WXK_DELETE, ID_DELETE_OBJ);
-    wxAcceleratorTable accel(3, entries);
+    entries[2].Set(wxACCEL_NORMAL, WXK_F3, ID_LAYER2);
+    entries[3].Set(wxACCEL_NORMAL, WXK_F4, ID_LAYER3);
+    entries[4].Set(wxACCEL_NORMAL, WXK_F5, ID_LAYER4);
+    entries[5].Set(wxACCEL_NORMAL, WXK_F6, ID_LAYER5);
+    entries[6].Set(wxACCEL_NORMAL, WXK_DELETE, ID_DELETE_OBJ);
+    wxAcceleratorTable accel(7, entries);
 
     // Set the accelerator table for the frame
     SetAcceleratorTable(accel);
@@ -833,12 +864,14 @@ level_editor_t::level_editor_t(wxWindow* parent, model_t& model, std::shared_ptr
         ptr->Bind(wxEVT_RADIOBUTTON, &level_editor_t::on_radio, this);
     Bind(wxEVT_MENU, &level_editor_t::on_active<0>, this, ID_LAYER0);
     Bind(wxEVT_MENU, &level_editor_t::on_active<1>, this, ID_LAYER1);
+    Bind(wxEVT_MENU, &level_editor_t::on_active<2>, this, ID_LAYER2);
+    Bind(wxEVT_MENU, &level_editor_t::on_active<3>, this, ID_LAYER3);
+    Bind(wxEVT_MENU, &level_editor_t::on_active<4>, this, ID_LAYER4);
+    Bind(wxEVT_MENU, &level_editor_t::on_active<5>, this, ID_LAYER5);
     Bind(wxEVT_MENU, &level_editor_t::on_delete, this, ID_DELETE_OBJ);
     palette_ctrl->Bind(wxEVT_SPINCTRL, &level_editor_t::on_change_palette, this);
     width_ctrl->Bind(wxEVT_SPINCTRL, &level_editor_t::on_change_width, this);
     height_ctrl->Bind(wxEVT_SPINCTRL, &level_editor_t::on_change_height, this);
-    metatiles_combo->Bind(wxEVT_COMBOBOX, &level_editor_t::on_metatiles_select, this);
-    metatiles_combo->Bind(wxEVT_TEXT, &level_editor_t::on_metatiles_text, this);
     chr_combo->Bind(wxEVT_COMBOBOX, &level_editor_t::on_chr_select, this);
     chr_combo->Bind(wxEVT_TEXT, &level_editor_t::on_chr_text, this);
     macro_ctrl->Bind(wxEVT_TEXT, &level_editor_t::on_macro_name, this);
@@ -855,17 +888,21 @@ level_editor_t::level_editor_t(wxWindow* parent, model_t& model, std::shared_ptr
 
 void level_editor_t::on_active(unsigned i)
 {
+    if(i >= layers.size())
+        return;
+
     level->current_layer = level_layer_t(i);
 
-    if(i == 0)
-    {
-        picker->Show(true);
-        object_panel->Hide();
-    }
-    else
+    if(i == 5)
     {
         picker->Hide();
         object_panel->Show(true);
+    }
+    else
+    {
+        picker->Show(true);
+        object_panel->Hide();
+        level->active = i;
     }
 
     layers[i]->SetValue(true);
@@ -897,6 +934,9 @@ void level_editor_t::on_update()
 
     if(last_height != level->dimen().h)
         height_ctrl->SetValue(last_height = level->dimen().h);
+
+    width_ctrl->SetIncrement(model.collision_scale());
+    height_ctrl->SetIncrement(model.collision_scale());
 }
 
 
@@ -905,7 +945,7 @@ void level_editor_t::on_change_palette(wxSpinEvent& event)
     if(level->palette != event.GetPosition())
         model.modify();
     level->palette = event.GetPosition(); 
-    load_metatiles();
+    load_chr();
     Refresh();
 
 }
@@ -913,9 +953,10 @@ void level_editor_t::on_change_palette(wxSpinEvent& event)
 void level_editor_t::on_change_width(wxSpinEvent& event)
 {
     if(!history.on_top<undo_level_dimen_t>())
-        history.push(level->metatile_layer.save());
+        history.push(level->chr_layer.save());
     int const w = event.GetPosition(); 
-    level->resize({ w, level->dimen().h });
+    dimen_t const dimen = { w, level->dimen().h };
+    level->resize(dimen, model.collision_div(dimen));
     model.modify();
     Update();
     Refresh();
@@ -924,9 +965,10 @@ void level_editor_t::on_change_width(wxSpinEvent& event)
 void level_editor_t::on_change_height(wxSpinEvent& event)
 {
     if(!history.on_top<undo_level_dimen_t>())
-        history.push(level->metatile_layer.save());
+        history.push(level->chr_layer.save());
     int const h = event.GetPosition(); 
-    level->resize({ level->dimen().w, h });
+    dimen_t const dimen = { level->dimen().w, h };
+    level->resize(dimen, model.collision_div(dimen));
     model.modify();
     Update();
     Refresh();
@@ -934,15 +976,7 @@ void level_editor_t::on_change_height(wxSpinEvent& event)
 
 void level_editor_t::model_refresh()
 {
-    std::string const metatiles_name = level->metatiles_name;
     std::string const chr_name = level->chr_name;
-
-    metatiles_combo->Unbind(wxEVT_TEXT, &level_editor_t::on_metatiles_text, this);
-    metatiles_combo->Clear();
-    for(auto const& metatiles : model.metatiles)
-        metatiles_combo->Append(metatiles->name);
-    metatiles_combo->SetValue(metatiles_name);
-    metatiles_combo->Bind(wxEVT_TEXT, &level_editor_t::on_metatiles_text, this);
 
     chr_combo->Unbind(wxEVT_TEXT, &level_editor_t::on_chr_text, this);
     chr_combo->Clear();
@@ -954,47 +988,16 @@ void level_editor_t::model_refresh()
     object_editor->update_classes();
     object_editor->load_object();
 
-    load_metatiles();
+    load_chr();
 }
 
-void level_editor_t::load_metatiles()
+void level_editor_t::load_chr()
 {
-    auto* chr_file = lookup_name(level->chr_name, model.chr_files);
-    auto* metatiles = lookup_name_ptr(level->metatiles_name, model.metatiles).get();
-    if(chr_file && metatiles)
-    {
-        level->refresh_metatiles(*metatiles, chr_file->chr, 
-                                 model.show_collisions ? &model.collision_wx_bitmaps : nullptr, 
-                                 model.palette_array(level->palette));
-    }
+    if(auto* chr_file = lookup_name(level->chr_name, model.chr_files))
+        level->refresh_chr(chr_file->chr, model.palette_array(level->palette));
     else
-        level->clear_metatiles();
+        level->clear_chr();
     Refresh();
-}
-
-void level_editor_t::on_metatiles_select(wxCommandEvent& event)
-{
-    int const index = event.GetSelection();
-    if(index >= 0 && index < model.metatiles.size())
-    {
-        level->metatiles_name = model.metatiles[index]->name;
-
-        level->chr_name = model.metatiles[index]->chr_name;
-        chr_combo->SetValue(level->chr_name);
-
-        level->palette = model.metatiles[index]->palette;
-        palette_ctrl->SetValue(level->palette);
-    }
-    load_metatiles();
-    model.modify();
-}
-
-void level_editor_t::on_metatiles_text(wxCommandEvent& event)
-{
-    if(level->metatiles_name != metatiles_combo->GetValue())
-        model.modify();
-    level->metatiles_name = metatiles_combo->GetValue();
-    load_metatiles();
 }
 
 void level_editor_t::on_chr_select(wxCommandEvent& event)
@@ -1006,7 +1009,7 @@ void level_editor_t::on_chr_select(wxCommandEvent& event)
             model.modify();
         level->chr_name = model.chr_files[index].name;
     }
-    load_metatiles();
+    load_chr();
 }
 
 void level_editor_t::on_chr_text(wxCommandEvent& event)
@@ -1014,7 +1017,7 @@ void level_editor_t::on_chr_text(wxCommandEvent& event)
     if(level->chr_name != chr_combo->GetValue())
         model.modify();
     level->chr_name = chr_combo->GetValue();
-    load_metatiles();
+    load_chr();
 }
 
 void level_editor_t::on_delete(wxCommandEvent& event)

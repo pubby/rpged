@@ -64,7 +64,9 @@ void grid_box_t::grid_resize(dimen_t dimen)
     grid_dimen = dimen;
     int const w = (dimen.w * tile_size().w + margin().w * 2) * scale;
     int const h = (dimen.h * tile_size().h + margin().h * 2) * scale;
-    SetScrollbars(1,1, w, h, 0, 0);
+    int sx, sy;
+    GetViewStart(&sx, &sy);
+    SetScrollbars(1,1, w, h, sx, sy);
     SetMinSize({ w, h });
 }
 
@@ -288,6 +290,7 @@ void canvas_box_t::on_down(mouse_button_t mb, coord_t at)
     if(mb == MBTN_LEFT && (model.tool == TOOL_DROPPER || wxGetKeyState(WXK_CONTROL)) && in_bounds(pen, layer().canvas_dimen()))
     {
         layer().dropper(pen);
+        on_dropper(layer().get(pen));
         GetParent()->Refresh();
     }
 }
@@ -304,7 +307,8 @@ void canvas_box_t::on_up(mouse_button_t mb, coord_t mouse_end)
         {
             model.modify();
 
-            editor().history.push(layer().save(pen));
+            if(auto* grid = std::get_if<grid_t<std::uint16_t>>(&model.paste->data))
+                editor().history.push(layer().save(rect_t{ pen, grid->dimen() }));
             layer().paste(*model.paste, pen);
             post_update();
         done_paste:

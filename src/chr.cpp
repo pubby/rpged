@@ -116,11 +116,19 @@ chr_editor_t::chr_editor_t(wxWindow* parent, model_t& model)
         collision_filename->SetMaxSize(wxSize(400, 24));
         wxButton* open_button = new wxButton(this, wxID_ANY, "Set Path");
 
+        wxStaticText* scale_label = new wxStaticText(this, wxID_ANY, "Metatile Size:", wxDefaultPosition, wxDefaultSize, wxALIGN_LEFT);
+        scale_ctrl = new wxSpinCtrl(this);
+        scale_ctrl->SetRange(0, 255);
+        scale_ctrl->SetValue(model.metatile_size);
+
         row_sizer->Add(collision_label, wxSizerFlags().Left().Border().Center());
         row_sizer->Add(collision_filename, wxSizerFlags().Left().Border().Center());
         row_sizer->Add(open_button, wxSizerFlags().Left().Border().Center());
+        row_sizer->Add(scale_label, wxSizerFlags().Left().Border().Center());
+        row_sizer->Add(scale_ctrl, wxSizerFlags().Left().Border().Center());
 
         open_button->Bind(wxEVT_COMMAND_BUTTON_CLICKED, &chr_editor_t::on_open_collision, this);
+        scale_ctrl->Bind(wxEVT_SPINCTRL, &chr_editor_t::on_change_scale, this);
     }
 
     for(auto const& file : model.chr_files)
@@ -158,7 +166,7 @@ void chr_editor_t::on_open_collision(wxCommandEvent& event)
         model.collision_path = filename;
         try
         {
-            auto bm = load_collision_file(filename);
+            auto bm = load_collision_file(filename, model.collision_scale());
             model.collision_bitmaps = std::move(bm.first);
             model.collision_wx_bitmaps = std::move(bm.second);
         }
@@ -239,10 +247,6 @@ void chr_editor_t::on_rename(unsigned index, std::string str)
     std::string const old_name = model.chr_files[index].name;
     model.chr_files[index].name = str;
 
-    for(auto& mt : model.metatiles)
-        if(mt->chr_name == old_name)
-            mt->chr_name = str;
-
     for(auto& level : model.levels)
         if(level->chr_name == old_name)
             level->chr_name = str;
@@ -255,6 +259,25 @@ void chr_editor_t::on_open(unsigned index, std::string path)
     model.chr_files[index].path = path;
     model.chr_files[index].load();
     model.modify();
+}
+
+void chr_editor_t::on_change_scale(wxSpinEvent& event)
+{
+    int const w = event.GetPosition(); 
+    model.metatile_size = w;
+
+    try
+    {
+        auto bm = load_collision_file(model.collision_path.string(), model.collision_scale());
+        model.collision_bitmaps = std::move(bm.first);
+        model.collision_wx_bitmaps = std::move(bm.second);
+    }
+    catch(...)
+    {}
+
+    model.modify();
+    Update();
+    Refresh();
 }
 
 void chr_editor_t::new_file(chr_file_t const& file)
@@ -271,6 +294,7 @@ void chr_editor_t::load()
         new_file(file);
 
     collision_filename->SetValue(model.collision_path.string());
+    scale_ctrl->SetValue(model.metatile_size);
 
     FitInside();
 }

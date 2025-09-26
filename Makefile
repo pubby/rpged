@@ -1,10 +1,10 @@
 .PHONY: all debug release cleandeps clean run
-debug: mapfab
-release: mapfab
-static: mapfab
-all: mapfab
-run: mapfab
-	./mapfab
+debug: xfab
+release: xfab
+static: xfab
+all: xfab
+run: xfab
+	./xfab
 
 define compile
 @echo -e '\033[32mCXX $@\033[0m'
@@ -68,7 +68,6 @@ main.cpp \
 model.cpp \
 grid_box.cpp \
 palette.cpp \
-metatiles.cpp \
 level.cpp \
 class.cpp \
 chr.cpp \
@@ -84,7 +83,7 @@ OBJS := $(foreach o,$(SRCS),$(OBJDIR)/$(o:.cpp=.o))
 DEPS := $(foreach o,$(SRCS),$(OBJDIR)/$(o:.cpp=.d))
 DATA := $(foreach o,$(IMGS),$(SRCDIR)/$(o:.png=.png.inc))
 
-mapfab: $(OBJS)
+xfab: $(OBJS)
 	echo 'LINK'
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDLIBS) 
 $(OBJDIR)/%.o: $(SRCDIR)/%.cpp $(DATA)
@@ -106,7 +105,7 @@ cleandeps:
 
 clean: cleandeps
 	rm -f $(wildcard $(OBJDIR)/*.o)
-	rm -f mapfab
+	rm -f xfab
 
 # Create directories:
 

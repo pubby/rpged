@@ -47,6 +47,7 @@ public:
     void on_rename(unsigned index, std::string str);
     void on_open(unsigned index, std::string path);
     void on_open_collision(wxCommandEvent& event);
+    void on_change_scale(wxSpinEvent& event);
 
     void load();
 
@@ -57,6 +58,7 @@ private:
     std::deque<std::unique_ptr<file_def_t>> file_defs;
     wxBoxSizer* file_sizer;
     wxTextCtrl* collision_filename;
+    wxSpinCtrl* scale_ctrl;
 };
 
 #endif

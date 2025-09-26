@@ -92,7 +92,16 @@ class_editor_t::class_editor_t(wxWindow* parent, model_t& model, std::shared_ptr
         row_sizer->Add(color_label, wxSizerFlags().Left().Border().Center());
         row_sizer->Add(color_picker, wxSizerFlags().Left().Border().Center());
 
+        wxStaticText* macro_label = new wxStaticText(this, wxID_ANY, "Macro:", wxDefaultPosition, wxDefaultSize, wxALIGN_RIGHT);
+        macro = new wxTextCtrl(this, wxID_ANY, oc->macro);
+        macro->SetMinSize(wxSize(100, 24));
+
+        row_sizer->Add(macro_label, wxSizerFlags().Left().Border().Center());
+        row_sizer->Add(macro, wxSizerFlags().Left().Border().Center());
+
         color_picker->Bind(wxEVT_COLOURPICKER_CHANGED, &class_editor_t::on_color, this);
+        macro->Bind(wxEVT_TEXT, &class_editor_t::on_macro, this);
+
     }
 
     load();
@@ -198,6 +207,12 @@ void class_editor_t::on_color(wxColourPickerEvent& event)
 {
     wxColour const color = event.GetColour();
     oc->color = { color.Red(), color.Green(), color.Blue() };
+    model.modify();
+}
+
+void class_editor_t::on_macro(wxCommandEvent& event)
+{
+    oc->macro = macro->GetValue();
     model.modify();
 }
 

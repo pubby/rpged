@@ -269,26 +269,32 @@ undo_t chr_layer_t::fill_attribute()
     if(!canvas_rect || active >= 4)
         return {};
 
-    undo_t ret = save(canvas_rect);
+    undo_t ret = tile_layer_t::save(canvas_rect);
 
     canvas_selector.for_each_selected([&](coord_t c)
     {
-        attributes.at(vec_div(c, 2)) = active;
+        tiles.at(c) &= 0x3FFF;
+        tiles.at(c) |= active << 14;
     });
 
     return ret;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// metatile_model_t ////////////////////////////////////////////////////////////
+// level_model_t ///////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 
-void metatile_model_t::clear_chr()
+dimen_t collision_layer_t::tile_size(model_t const& m) const
+{ 
+    return { 8 * m.collision_scale(), 8 * m.collision_scale() }; 
+}
+
+void level_model_t::clear_chr()
 {
     chr_bitmaps.clear();
 }
 
-void metatile_model_t::refresh_chr(chr_array_t const& chr, palette_array_t const& palette)
+void level_model_t::refresh_chr(chr_array_t const& chr, palette_array_t const& palette)
 {
     auto bmp = chr_to_bitmaps(chr.data(), chr.size(), palette.data());
     chr_bitmaps.clear();
@@ -297,116 +303,76 @@ void metatile_model_t::refresh_chr(chr_array_t const& chr, palette_array_t const
         chr_bitmaps.push_back(convert_bitmap(bmp[i]));
 }
 
-void metatile_model_t::shift(std::uint8_t from, std::uint8_t to, int amount)
+unsigned level_model_t::count_mt(unsigned metatile_size, unsigned select) 
 {
-    chr_layer_t chr_copy = chr_layer;
-    collision_layer_t collision_copy = collision_layer;
-
-    int len = int(to) - int(from);
-    if(len < 0)
-        len += 256;
-
-    int j = 0;
-    for(std::uint8_t i = from; i != to; i += 1, j += 1)
+    struct mt_t
     {
-        unsigned tx = (i % 16);
-        unsigned ty = (i / 16);
+        std::vector<std::uint16_t> tiles;
+        std::uint8_t collision;
 
-        int k = (j + amount) % len;
-        if(k < 0)
-            k += len;
+        auto operator<=>(mt_t const&) const = default;
+    };
 
-        unsigned ux = (std::uint8_t(from + k) % 16);
-        unsigned uy = (std::uint8_t(from + k) / 16);
+    unsigned const s = metatile_size;
 
-        for(unsigned y = 0; y < 2; y += 1)
-        for(unsigned x = 0; x < 2; x += 1)
-            chr_layer.set({ ux*2+x, uy*2+y }, chr_copy.get({ tx*2+x, ty*2+y }));
-        collision_layer.set({ ux, uy, }, collision_copy.get({ tx, ty }));
-    }
-}
+    if(s == 0)
+        return 0;
 
-////////////////////////////////////////////////////////////////////////////////
-// level_model_t ///////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
+    if(select)
+        chr_layer.canvas_selector.select_all(false);
 
-void level_model_t::shift(std::uint8_t from, std::uint8_t to, int amount)
-{
-    int len = int(to) - int(from);
-    if(len < 0)
-        len += 256;
+    std::map<mt_t, unsigned> mt_map;
 
-    for(std::uint8_t& mt : metatile_layer.tiles)
+    dimen_t const d = chr_layer.canvas_dimen();
+
+    for(unsigned y = 0; y < d.h; y += s)
+    for(unsigned x = 0; x < d.w; x += s)
     {
-        int a = mt - int(from);
-        if(a >= 0 && a < len)
+        mt_t mt = {};
+
+        for(unsigned yy = 0; yy < s; yy += 1)
+        for(unsigned xx = 0; xx < s; xx += 1)
         {
-            a += amount;
-            a %= len;
-            if(a < 0)
-                a += len;
-            mt = std::uint8_t(from + a);
-        }
-    }
-}
-
-void level_model_t::clear_metatiles()
-{
-    metatile_bitmaps.clear();
-}
-
-void level_model_t::refresh_metatiles(
-    metatile_model_t const& metatiles, chr_array_t const& chr, 
-    std::vector<wxBitmap> const* collision_bitmaps, palette_array_t const& palette)
-{
-    auto chr_bitmaps = chr_to_bitmaps(chr.data(), chr.size(), palette.data());
-
-    unsigned i = 0;
-    metatile_bitmaps.clear();
-    for(coord_t c : dimen_range({ 16, 16 }))
-    {
-        wxBitmap bitmap(wxSize(16, 16));
-
-        {
-            wxMemoryDC dc;
-            dc.SelectObject(bitmap);
-
-            for(int y = 0; y < 2; ++y)
-            for(int x = 0; x < 2; ++x)
-            {
-                coord_t const c0 = { c.x*2 + x, c.y*2 + y };
-                if(in_bounds(c0, metatiles.chr_layer.tiles.dimen()))
-                {
-                    std::uint8_t const i = metatiles.chr_layer.tiles.at({ c.x*2 + x, c.y*2 + y });
-                    std::uint8_t const a = metatiles.chr_layer.attributes.at(c);
-                    dc.DrawBitmap(chr_bitmaps.at(i)[a], { x*8, y*8 }, false);
-                }
-            }
-
-            if(collision_bitmaps)
-            {
-                unsigned const tile = metatiles.collision_layer.tiles.at(c);
-                if(tile < collision_bitmaps->size())
-                    dc.DrawBitmap((*collision_bitmaps)[tile], { 0, 0 }, false);
-            }
-
-            if(i >= metatiles.num)
-            {
-                dc.SetPen(wxPen(wxColor(255, 0, 0), 2, wxPENSTYLE_SOLID));
-                dc.DrawLine(1, 1, 14, 14);
-                dc.SetPen(wxPen(wxColor(0, 0, 255), 2, wxPENSTYLE_SOLID));
-                dc.DrawLine(1, 14, 14, 1);
-            }
+            if(x+xx < d.w && y+yy < d.h)
+                mt.tiles.push_back(chr_layer.tiles[x+xx + (y+yy)*d.w]);
+            else
+                mt.tiles.push_back(0);
         }
 
-#ifdef GC_RENDER
-        metatile_bitmaps.push_back(get_renderer()->CreateBitmap(std::move(bitmap)));
-#else
-        metatile_bitmaps.push_back(std::move(bitmap));
-#endif
-        ++i;
+        mt.collision = collision_layer.tiles[(x / s) + (y / s) * ((d.w + s - 1) / s)];
+        mt_map[mt] += 1;
     }
+
+    if(select)
+    {
+        for(unsigned y = 0; y < d.h; y += s)
+        for(unsigned x = 0; x < d.w; x += s)
+        {
+            mt_t mt = {};
+
+            for(unsigned yy = 0; yy < s; yy += 1)
+            for(unsigned xx = 0; xx < s; xx += 1)
+            {
+                if(x+xx < d.w && y+yy < d.h)
+                    mt.tiles.push_back(chr_layer.tiles[x+xx + (y+yy)*d.w]);
+                else
+                    mt.tiles.push_back(0);
+            }
+
+            mt.collision = collision_layer.tiles[(x / s) + (y / s) * ((d.w + s - 1) / s)];
+
+            if(mt_map[mt] <= select)
+            {
+                for(unsigned yy = 0; yy < s; yy += 1)
+                for(unsigned xx = 0; xx < s; xx += 1)
+                    chr_layer.canvas_selector.select(coord_t{ x+xx, y+yy });
+            }
+        }
+    }
+
+    return mt_map.size();
 }
+
 
 ////////////////////////////////////////////////////////////////////////////////
 // model_t /////////////////////////////////////////////////////////////////////
@@ -472,17 +438,6 @@ undo_t model_t::operator()(undo_move_objects_t const& undo)
     return ret;
 }
 
-undo_t model_t::operator()(undo_shift_mt_t const& undo)
-{
-    undo.metatiles->shift(undo.from, undo.to, undo.num);
-    for(auto level : undo.levels)
-        level->shift(undo.from, undo.to, undo.num);
-
-    undo_shift_mt_t ret = undo;
-    ret.num = -ret.num;
-    return ret;
-}
-
 palette_array_t model_t::palette_array(unsigned palette_index)
 {
     std::array<std::uint8_t, 16> ret;
@@ -519,12 +474,13 @@ void model_t::write_file(FILE* fp, std::filesystem::path base_path) const
         std::fputc((i >> 8) & 0xFF, fp); // Hi
     };
 
-    std::fwrite("MapFab", 7, 1, fp);
+    std::fwrite("8x8Fab", 7, 1, fp);
 
     // Version:
     write8(SAVE_VERSION);
 
     // Collision file:
+    write8(metatile_size);
     write_str(std::filesystem::proximate(collision_path, base_path).generic_string());
 
     // CHR:
@@ -540,27 +496,12 @@ void model_t::write_file(FILE* fp, std::filesystem::path base_path) const
     for(std::uint8_t data : palette.color_layer.tiles)
         write8(data);
 
-    // Metatiles:
-    write8(metatiles.size() & 0xFF);
-    for(auto const& mt : metatiles)
-    {
-        write_str(mt->name.c_str());
-        write_str(mt->chr_name.c_str());
-        write8(mt->palette & 0xFF);
-        write8(mt->num & 0xFF);
-        for(std::uint8_t data : mt->chr_layer.tiles)
-            write8(data);
-        for(std::uint8_t data : mt->chr_layer.attributes)
-            write8(data);
-        for(std::uint8_t data : mt->collision_layer.tiles)
-            write8(data);
-    }
-
     // Object classes:
     write8(object_classes.size() & 0xFF);
     for(auto const& oc : object_classes)
     {
         write_str(oc->name.c_str());
+        write_str(oc->macro.c_str());
         write8(oc->color.r & 0xFF);
         write8(oc->color.g & 0xFF);
         write8(oc->color.b & 0xFF);
@@ -573,18 +514,19 @@ void model_t::write_file(FILE* fp, std::filesystem::path base_path) const
     }
 
     // Levels:
-    write8(levels.size() & 0xFF);
+    write16(levels.size() & 0xFFFF);
     for(auto const& level : levels)
     {
         write_str(level->name.c_str());
         write_str(level->macro_name.c_str());
         write_str(level->chr_name.c_str());
         write8(level->palette & 0xFF);
-        write_str(level->metatiles_name.c_str());
-        write8(level->dimen().w & 0xFF);
-        write8(level->dimen().h & 0xFF);
-        for(std::uint8_t data : level->metatile_layer.tiles)
-            write8(data);
+        write16(level->dimen().w & 0xFFFF);
+        write16(level->dimen().h & 0xFFFF);
+        for(std::uint16_t data : level->chr_layer.tiles)
+            write16(data);
+        for(coord_t c : dimen_range(level->collision_layer.tiles.dimen()))
+            write8(level->collision_layer.tiles[c]);
         write16(level->objects.size());
         for(auto const& obj : level->objects)
         {
@@ -656,14 +598,15 @@ void model_t::read_file(FILE* fp, std::filesystem::path base_path)
     char buffer[8];
     if(!std::fread(buffer, 8, 1, fp))
         throw std::runtime_error("Unable to read magic number.");
-    if(memcmp(buffer, "MapFab", 7) != 0)
+    if(memcmp(buffer, "8x8Fab", 7) != 0)
         throw std::runtime_error("Incorrect magic number.");
     if(buffer[7] > SAVE_VERSION)
-        throw std::runtime_error("File is from a newer version of MapFab.");
+        throw std::runtime_error("File is from a newer version of XFab.");
 
     // Collision file:
+    metatile_size = get8(false);
     collision_path = get_path();
-    auto collisions = load_collision_file(collision_path.string());
+    auto collisions = load_collision_file(collision_path.string(), collision_scale());
     collision_bitmaps = std::move(collisions.first);
     collision_wx_bitmaps = std::move(collisions.second);
 
@@ -680,27 +623,8 @@ void model_t::read_file(FILE* fp, std::filesystem::path base_path)
 
     // Palettes:
     palette.num = get8(true);
-    for(std::uint8_t& data : palette.color_layer.tiles)
+    for(std::uint16_t& data : palette.color_layer.tiles)
         data = get8();
-
-    // Metatiles:
-    unsigned const num_mt = get8(true);
-    metatiles.clear();
-    for(unsigned i = 0; i < num_mt; ++i)
-    {
-        auto& mt = *metatiles.emplace_back(std::make_shared<metatile_model_t>());
-        mt.name = get_str();
-        mt.chr_name = get_str();
-        mt.palette = get8();
-        mt.num = get8(true);
-        assert(mt.chr_layer.tiles.size() == 32 * 32);
-        for(std::uint8_t& data : mt.chr_layer.tiles)
-            data = get8();
-        for(std::uint8_t& data : mt.chr_layer.attributes)
-            data = get8();
-        for(std::uint8_t& data : mt.collision_layer.tiles)
-            data = get8();
-    }
 
     // Object classes:
     unsigned const num_oc = get8(true);
@@ -710,6 +634,7 @@ void model_t::read_file(FILE* fp, std::filesystem::path base_path)
         auto& oc = *object_classes.emplace_back(std::make_shared<object_class_t>());
 
         oc.name = get_str();
+        oc.macro = get_str();
         oc.color.r = get8();
         oc.color.g = get8();
         oc.color.b = get8();
@@ -724,7 +649,7 @@ void model_t::read_file(FILE* fp, std::filesystem::path base_path)
     }
 
     // Levels:
-    unsigned const num_levels = get8(true);
+    unsigned const num_levels = get16();
     levels.clear();
     for(unsigned i = 0; i < num_levels; ++i)
     {
@@ -733,10 +658,12 @@ void model_t::read_file(FILE* fp, std::filesystem::path base_path)
         level.macro_name = get_str();
         level.chr_name = get_str();
         level.palette = get8();
-        level.metatiles_name = get_str();
-        level.resize({get8(true), get8(true) });
-        for(std::uint8_t& data : level.metatile_layer.tiles)
-            data = get8();
+        dimen_t const dimen = { get16(), get16() };
+        level.resize(dimen, collision_div(dimen));
+        for(std::uint16_t& data : level.chr_layer.tiles)
+            data = get16();
+        for(coord_t c : dimen_range(level.collision_layer.tiles.dimen()))
+            level.collision_layer.tiles[c] = get8(false);
         unsigned const num_objects = get16();
         for(unsigned i = 0; i < num_objects; ++i)
         {
@@ -764,6 +691,7 @@ void model_t::read_file(FILE* fp, std::filesystem::path base_path)
 
 void model_t::write_json(FILE* fp, std::filesystem::path base_path) const
 {
+    /*
     base_path.remove_filename();
 
     json data;
@@ -843,6 +771,7 @@ void model_t::write_json(FILE* fp, std::filesystem::path base_path) const
                 }));
             }
 
+            // TODO: macro
             ocs.push_back(json::object({
                 {"name", oc->name},
                 {"color", json::array({ oc->color.r, oc->color.g, oc->color.b })},
@@ -908,10 +837,12 @@ void model_t::write_json(FILE* fp, std::filesystem::path base_path) const
 
     std::string str = data.dump(2);
     std::fwrite(str.data(), str.size(), 1, fp);
+    */
 }
 
 void model_t::read_json(FILE* fp, std::filesystem::path base_path)
 {
+    /*
     auto const convert_path = [&](std::string const& str) -> std::filesystem::path
     {
         std::filesystem::path path(str, std::filesystem::path::generic_format);
@@ -928,7 +859,7 @@ void model_t::read_json(FILE* fp, std::filesystem::path base_path)
     base_path.remove_filename();
 
     if(data.at("version") > SAVE_VERSION)
-        throw std::runtime_error("File is from a newer version of MapFab.");
+        throw std::runtime_error("File is from a newer version of XFab.");
 
     // Collision file:
     collision_path = convert_path(data.at("collision_path").get<std::string>());
@@ -995,6 +926,7 @@ void model_t::read_json(FILE* fp, std::filesystem::path base_path)
         {
             auto& oc = *object_classes.emplace_back(std::make_shared<object_class_t>());
 
+            // TODO: macro
             oc.name = o.at("name").get<std::string>();
             oc.color.r = o.at("color").at(0).get<int>();
             oc.color.g = o.at("color").at(1).get<int>();
@@ -1057,6 +989,7 @@ void model_t::read_json(FILE* fp, std::filesystem::path base_path)
     }
 
     modified = modified_since_save = false;
+    */
 }
 
 ////////////////////////////////////////////////////////////////////////////////
