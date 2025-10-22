@@ -8,7 +8,7 @@ run: xfab
 
 define compile
 @echo -e '\033[32mCXX $@\033[0m'
-$(CXX) $(CXXFLAGS) -c -o $@ $<
+$(CXX) `$(WXCONFIG) --cxxflags` $(CXXFLAGS) -c -o $@ $<
 endef
 
 define deps
@@ -85,7 +85,7 @@ DATA := $(foreach o,$(IMGS),$(SRCDIR)/$(o:.png=.png.inc))
 
 xfab: $(OBJS)
 	echo 'LINK'
-	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDLIBS) 
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDLIBS) `$(WXCONFIG) --cxxflags`
 $(OBJDIR)/%.o: $(SRCDIR)/%.cpp $(DATA)
 	$(compile)
 $(OBJDIR)/%.d: $(SRCDIR)/%.cpp $(DATA)
