@@ -37,7 +37,7 @@ public:
 
     virtual size_t GetDataSize() const override
     {
-        return data.size() * sizeof(std::uint16_t);
+        return data.size() * sizeof(std::uint32_t);
     }
 
     virtual bool GetDataHere(void* buf) const override
@@ -48,15 +48,15 @@ public:
 
     virtual bool SetData(size_t len, const void* buf) override
     {
-        std::uint16_t const* ptr = static_cast<std::uint16_t const*>(buf);
-        data.assign(ptr, ptr + (len / sizeof(std::uint16_t)));
+        std::uint32_t const* ptr = static_cast<std::uint32_t const*>(buf);
+        data.assign(ptr, ptr + (len / sizeof(std::uint32_t)));
         return true;
     }
 
     tile_copy_t get() const { return tile_copy_t::from_vec(data); }
 
 private:
-    std::vector<std::uint16_t> data;
+    std::vector<std::uint32_t> data;
 };
 
 class usage_dialog_t : public wxDialog
@@ -743,10 +743,10 @@ void frame_t::on_open(wxCommandEvent& event)
         frame->class_panel->load_pages();
         frame->reset_watcher();
         frame->Update();
+        frame->Layout();
+        frame->Refresh();
 
-        if(frame == this)
-            frame->Refresh();
-        else
+        if(frame != this)
         {
             frame->Show();
             frame->SendSizeEvent();

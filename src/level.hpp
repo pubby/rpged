@@ -81,7 +81,7 @@ private:
     object_editor_t* editor;
 };
 
-void draw_chr_tile(level_model_t const& model, render_t& gc, std::uint16_t tile, std::uint8_t attribute, coord_t at);
+void draw_chr_tile(level_model_t const& model, render_t& gc, std::uint16_t id, std::uint16_t tile, std::uint8_t attribute, coord_t at);
 void draw_collision_tile(model_t const& model, render_t& gc, std::uint8_t tile, coord_t at);
 
 class chr_picker_t : public selector_box_t
@@ -108,9 +108,9 @@ public:
     , level(level)
     { resize(); }
 
-    virtual void draw_tile(render_t& gc, unsigned tile, coord_t at) override 
+    virtual void draw_tile(render_t& gc, std::uint32_t tile, coord_t at) override 
     { 
-        draw_chr_tile(*level, gc, tile & 0x3FFF, tile >> 14, at); 
+        draw_chr_tile(*level, gc, chr_id(tile), tile_tile(tile & 0x3FFF), tile_attr(tile), at); 
     }
     virtual void draw_tiles(render_t& gc) override;
 
@@ -124,7 +124,7 @@ public:
     virtual void on_down(mouse_button_t mb, coord_t at) override;
     virtual void on_up(mouse_button_t mb, coord_t at) override;
     virtual void on_motion(coord_t at) override;
-    virtual void on_dropper(std::uint16_t) override;
+    virtual void on_dropper(std::uint32_t) override;
 
     virtual bool enable_tile_select() const { return level->current_layer != OBJECT_LAYER; }
 
@@ -190,7 +190,7 @@ private:
     virtual void select_invert() override;
 public:
     void model_refresh();
-    void load_chr();
+    void load_chr(bool remake = false);
 };
 
 struct level_policy_t

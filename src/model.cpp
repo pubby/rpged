@@ -11,7 +11,7 @@ using json = nlohmann::json;
 // object_t ////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 
-void object_t::append_vec(std::vector<std::uint16_t>& vec) const
+void object_t::append_vec(std::vector<std::uint32_t>& vec) const
 {
     auto const append_str = [&](std::string const& str)
     {
@@ -32,9 +32,9 @@ void object_t::append_vec(std::vector<std::uint16_t>& vec) const
     }
 }
 
-void object_t::from_vec(std::uint16_t const*& ptr, std::uint16_t const* end)
+void object_t::from_vec(std::uint32_t const*& ptr, std::uint32_t const* end)
 {
-    auto const get = [&]() -> std::uint16_t
+    auto const get = [&]() -> std::uint32_t
     {
         if(ptr >= end)
             throw std::runtime_error("Data out of bounds.");
@@ -49,8 +49,8 @@ void object_t::from_vec(std::uint16_t const*& ptr, std::uint16_t const* end)
         return ret;
     };
 
-    position.x = static_cast<std::int16_t>(get());
-    position.y = static_cast<std::int16_t>(get());
+    position.x = static_cast<std::int32_t>(get());
+    position.y = static_cast<std::int32_t>(get());
     name = from_str();
     oclass = from_str();
 
@@ -168,7 +168,7 @@ tile_copy_t tile_layer_t::copy(undo_t* cut)
 {
     rect_t const rect = crop(canvas_selector.select_rect(), canvas_dimen());
     tile_copy_t copy = { format() };
-    grid_t<std::uint16_t> tiles;
+    grid_t<std::uint32_t> tiles;
     tiles.resize(rect.d);
     if(cut)
         *cut = save(rect);
@@ -190,9 +190,9 @@ tile_copy_t tile_layer_t::copy(undo_t* cut)
 
 void tile_layer_t::paste(tile_copy_t const& copy, coord_t at)
 {
-    if(auto* grid = std::get_if<grid_t<std::uint16_t>>(&copy.data))
+    if(auto* grid = std::get_if<grid_t<std::uint32_t>>(&copy.data))
         for(coord_t c : dimen_range(grid->dimen()))
-            if((*grid)[c] != std::uint16_t(~0u) && in_bounds(at + c, canvas_dimen()))
+            if((*grid)[c] != std::uint32_t(~0u) && in_bounds(at + c, canvas_dimen()))
                 set(at + c, (*grid)[c]);
 }
 
@@ -200,6 +200,13 @@ void tile_layer_t::dropper(coord_t at)
 { 
     picker_selector.select_all(false);
     picker_selector.select(to_pick(get(at)));
+}
+
+void chr_layer_t::dropper(coord_t at)
+{
+    std::uint32_t t = get(at);
+    chr_id = t >> 16;
+    tile_layer_t::dropper(at);
 }
 
 undo_t tile_layer_t::fill()
@@ -224,7 +231,7 @@ undo_t tile_layer_t::fill()
 
 undo_t tile_layer_t::fill_paste(tile_copy_t const& copy)
 {
-    if(auto* grid = std::get_if<grid_t<std::uint16_t>>(&copy.data))
+    if(auto* grid = std::get_if<grid_t<std::uint32_t>>(&copy.data))
     {
         rect_t const canvas_rect = crop(canvas_selector.select_rect(), canvas_dimen());
         dimen_t const copy_dimen = grid->dimen();
@@ -239,7 +246,7 @@ undo_t tile_layer_t::fill_paste(tile_copy_t const& copy)
             coord_t const o = c - canvas_rect.c;
             coord_t const p = coord_t{ o.x % copy_dimen.w, o.y % copy_dimen.h };
 
-            if((*grid)[p] != std::uint16_t(~0u) && in_bounds(c, canvas_dimen()))
+            if((*grid)[p] != std::uint32_t(~0u) && in_bounds(c, canvas_dimen()))
                 set(c, (*grid)[p]);
         });
 
@@ -273,8 +280,8 @@ undo_t chr_layer_t::fill_attribute()
 
     canvas_selector.for_each_selected([&](coord_t c)
     {
-        tiles.at(c) &= 0x3FFF;
-        tiles.at(c) |= active << 14;
+        tiles.at(c) &= 0xFFFF3FFF;
+        tiles.at(c) |= (active & 0b11) << 14;
     });
 
     return ret;
@@ -294,20 +301,25 @@ void level_model_t::clear_chr()
     chr_bitmaps.clear();
 }
 
-void level_model_t::refresh_chr(chr_array_t const& chr, palette_array_t const& palette)
+void level_model_t::refresh_chr(std::deque<chr_file_t> const& chr_deque, palette_array_t const& palette)
 {
-    auto bmp = chr_to_bitmaps(chr.data(), chr.size(), palette.data());
     chr_bitmaps.clear();
-    chr_bitmaps.reserve(bmp.size());
-    for(unsigned i = 0; i < bmp.size(); ++i)
-        chr_bitmaps.push_back(convert_bitmap(bmp[i]));
+    for(chr_file_t const& chr : chr_deque)
+    {
+        auto bmp = chr_to_bitmaps(chr.chr.data(), chr.chr.size(), palette.data(), chr.indices);
+        std::vector<attr_gc_bitmaps_t> bitmaps;
+        bitmaps.reserve(bmp.size());
+        for(unsigned i = 0; i < bmp.size(); ++i)
+            bitmaps.push_back(convert_bitmap(bmp[i]));
+        chr_bitmaps.emplace(chr.id, std::move(bitmaps));
+    }
 }
 
 unsigned level_model_t::count_mt(unsigned metatile_size, unsigned select) 
 {
     struct mt_t
     {
-        std::vector<std::uint16_t> tiles;
+        std::vector<std::uint32_t> tiles;
         std::uint8_t collision;
 
         auto operator<=>(mt_t const&) const = default;
@@ -474,6 +486,14 @@ void model_t::write_file(FILE* fp, std::filesystem::path base_path) const
         std::fputc((i >> 8) & 0xFF, fp); // Hi
     };
 
+    auto const write32 = [&](std::uint32_t i)
+    {
+        std::fputc(i & 0xFF, fp);
+        std::fputc((i >> 8) & 0xFF, fp);
+        std::fputc((i >> 16) & 0xFF, fp);
+        std::fputc((i >> 24) & 0xFF, fp);
+    };
+
     std::fwrite("8x8Fab", 7, 1, fp);
 
     // Version:
@@ -487,8 +507,12 @@ void model_t::write_file(FILE* fp, std::filesystem::path base_path) const
     write8(chr_files.size() & 0xFF);
     for(auto const& file : chr_files)
     {
+        write16(file.id);
         write_str(file.name);
         write_str(std::filesystem::proximate(file.path, base_path).generic_string());
+        //write16(file.indices.size());
+        //for(std::uint16_t index : file.indices)
+            //write16(index);
     }
 
     // Palettes:
@@ -523,8 +547,8 @@ void model_t::write_file(FILE* fp, std::filesystem::path base_path) const
         write8(level->palette & 0xFF);
         write16(level->dimen().w & 0xFFFF);
         write16(level->dimen().h & 0xFFFF);
-        for(std::uint16_t data : level->chr_layer.tiles)
-            write16(data);
+        for(std::uint32_t data : level->chr_layer.tiles)
+            write32(data);
         for(coord_t c : dimen_range(level->collision_layer.tiles.dimen()))
             write8(level->collision_layer.tiles[c]);
         write16(level->objects.size());
@@ -576,6 +600,21 @@ void model_t::read_file(FILE* fp, std::filesystem::path base_path)
         return (lo & 0xFF) | ((hi & 0xFF) << 8);
     };
 
+    auto const get32 = [&]() -> std::uint32_t
+    {
+        int a = std::getc(fp);
+        int b = std::getc(fp);
+        int c = std::getc(fp);
+        int d = std::getc(fp);
+        if(a == EOF || b == EOF || c == EOF || d == EOF)
+            throw std::runtime_error("Unable to read 32-bit value.");
+        a &= 0xFF;
+        b &= 0xFF;
+        c &= 0xFF;
+        d &= 0xFF;
+        return a | (b << 8) | (c << 16) | (d << 24);
+    };
+
     auto const get_str = [&]() -> std::string
     {
         std::string ret;
@@ -616,14 +655,19 @@ void model_t::read_file(FILE* fp, std::filesystem::path base_path)
     for(unsigned i = 0; i < num_chr; ++i)
     {
         auto& chr = chr_files.emplace_back();
+        chr.id = get16();
         chr.name = get_str();
         chr.path = get_path();
         chr.load();
+
+        //std::uint16_t size = get16(file.indices.size());
+        //for(unsigned j = 0; j < size; j += 1)
+            //get16();
     }
 
     // Palettes:
     palette.num = get8(true);
-    for(std::uint16_t& data : palette.color_layer.tiles)
+    for(std::uint32_t& data : palette.color_layer.tiles)
         data = get8();
 
     // Object classes:
@@ -660,8 +704,8 @@ void model_t::read_file(FILE* fp, std::filesystem::path base_path)
         level.palette = get8();
         dimen_t const dimen = { get16(), get16() };
         level.resize(dimen, collision_div(dimen));
-        for(std::uint16_t& data : level.chr_layer.tiles)
-            data = get16();
+        for(std::uint32_t& data : level.chr_layer.tiles)
+            data = get32();
         for(coord_t c : dimen_range(level.collision_layer.tiles.dimen()))
             level.collision_layer.tiles[c] = get8(false);
         unsigned const num_objects = get16();
@@ -671,8 +715,8 @@ void model_t::read_file(FILE* fp, std::filesystem::path base_path)
 
             obj.name = get_str();
             obj.oclass = get_str();
-            obj.position.x = static_cast<std::int16_t>(get16());
-            obj.position.y = static_cast<std::int16_t>(get16());
+            obj.position.x = static_cast<std::int32_t>(get16());
+            obj.position.y = static_cast<std::int32_t>(get16());
 
             for(auto const& oc : object_classes)
             {
@@ -1021,6 +1065,7 @@ void chr_file_t::load()
     if(path.empty())
         return;
     std::vector<std::uint8_t> data = read_binary_file(path.string().c_str());
+    indices.clear();
 
     if(data.empty())
         return;
@@ -1030,7 +1075,16 @@ void chr_file_t::load()
         c = std::tolower(c);
 
     if(ext == ".png")
-        data = png_to_chr(data.data(), data.size(), false);
+    {
+        auto result = png_to_chr(data.data(), data.size());
+        data = std::move(result.chr);
+        indices = std::move(result.indices);
+    }
+    else
+    {
+        for(unsigned i = 0; i < data.size() / 16; i += 1)
+            indices.push_back(i);
+    }
 
     std::copy_n(data.begin(), std::min(data.size(), chr.size()), chr.begin());
 }

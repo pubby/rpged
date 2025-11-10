@@ -46,10 +46,17 @@ using attr_gc_bitmaps_t = std::array<bitmap_t, 4>;
 
 attr_gc_bitmaps_t convert_bitmap(attr_bitmaps_t const&);
 
-std::vector<attr_bitmaps_t> chr_to_bitmaps(std::uint8_t const* data, std::size_t size, std::uint8_t const* palette);
+std::vector<attr_bitmaps_t> chr_to_bitmaps(std::uint8_t const* data, std::size_t size, std::uint8_t const* palette,
+                                           std::vector<std::uint16_t> const& indices);
 
 std::pair<std::vector<bitmap_t>, std::vector<wxBitmap>> load_collision_file(wxString const& string, unsigned scale);
 
-std::vector<std::uint8_t> png_to_chr(std::uint8_t const* png, std::size_t size, bool chr16);
+struct chr_patterns_t
+{
+    std::vector<std::uint8_t> chr;
+    std::vector<std::uint16_t> indices;
+};
+
+chr_patterns_t png_to_chr(std::uint8_t const* png, std::size_t size);
 
 #endif

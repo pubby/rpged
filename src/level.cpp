@@ -2,14 +2,30 @@
 
 #include <ranges>
 
-void draw_chr_tile(level_model_t const& model, render_t& gc, std::uint16_t tile, std::uint8_t attribute, coord_t at)
+void draw_chr_tile(level_model_t const& model, render_t& gc, std::uint16_t id, std::uint16_t tile, std::uint8_t attribute, coord_t at)
 {
-    if(tile < model.chr_bitmaps.size())
+    auto const it = model.chr_bitmaps.find(id);
+
+    if(it == model.chr_bitmaps.end())
+        goto fail;
+
+    if(tile < it->second.size() && attribute < 4)
+    {
 #if GC_RENDER
-        gc.DrawBitmap(model.chr_bitmaps[tile][attribute], at.x, at.y, 8, 8);
+        gc.DrawBitmap(it->second[tile][attribute], at.x, at.y, 8, 8);
 #else
-        gc.DrawBitmap(model.chr_bitmaps[tile][attribute], { at.x, at.y });
+        gc.DrawBitmap(it->second[tile][attribute], { at.x, at.y });
 #endif
+    }
+    else
+    {
+    fail:
+#if GC_RENDER
+        gc.DrawBitmap(model.bad_chr, at.x, at.y, 8, 8);
+#else
+        gc.DrawBitmap(model.bad_chr, { at.x, at.y });
+#endif
+    }
 }
 
 void draw_collision_tile(model_t const& model, render_t& gc, std::uint8_t tile, coord_t at)
@@ -332,7 +348,7 @@ object_dialog_t::object_dialog_t(wxWindow* parent, model_t& model, object_t& obj
 // metatile_picker_t //////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 
-void chr_picker_t::draw_tile(render_t& gc, unsigned tile, coord_t at)
+void chr_picker_t::draw_tile(render_t& gc, std::uint32_t tile, coord_t at)
 { 
     if(level->collisions())
     {
@@ -342,7 +358,7 @@ void chr_picker_t::draw_tile(render_t& gc, unsigned tile, coord_t at)
         draw_collision_tile(model, gc, tile, at);
     }
     else
-        draw_chr_tile(*level, gc, tile & 0x3FFF, level->active, at); 
+        draw_chr_tile(*level, gc, level->chr_id, tile_tile(tile), level->active, at); 
 }
 
 
@@ -357,9 +373,8 @@ void level_canvas_t::draw_tiles(render_t& gc)
         int x0 = c.x * 8 + margin().w;
         int y0 = c.y * 8 + margin().h;
 
-        unsigned const tile = level->chr_layer.tiles.at(c) & 0x3FFF;
-        unsigned const attribute = level->chr_layer.tiles.at(c) >> 14;
-        draw_chr_tile(*level, gc, tile, attribute, { x0, y0 });
+        std::uint32_t const tile = level->chr_layer.tiles.at(c);
+        draw_chr_tile(*level, gc, chr_id(tile), tile_tile(tile), tile_attr(tile), { x0, y0 });
     }
 
     for(coord_t c : dimen_range(level->collision_layer.tiles.dimen()))
@@ -748,10 +763,18 @@ void level_canvas_t::on_motion(coord_t at)
         canvas_box_t::on_motion(at);
 }
 
-void level_canvas_t::on_dropper(std::uint16_t value)
+void level_canvas_t::on_dropper(std::uint32_t value)
 {
     level_editor_t* parent = static_cast<level_editor_t*>(GetParent());
-    parent->on_active(value >> 14);
+    parent->on_active((value >> 14) & 0b11);
+
+    unsigned const id = value >> 16;
+
+    for(auto const& chr : model.chr_files)
+        if(chr.id == id)
+            parent->chr_combo->SetValue(chr.name);
+
+    parent->load_chr();
     parent->Refresh();
 }
 
@@ -883,7 +906,8 @@ level_editor_t::level_editor_t(wxWindow* parent, model_t& model, std::shared_ptr
         on_active(li);
     }
 
-    model_refresh();
+    load_chr(true);
+    Refresh();
 }
 
 void level_editor_t::on_active(unsigned i)
@@ -945,7 +969,7 @@ void level_editor_t::on_change_palette(wxSpinEvent& event)
     if(level->palette != event.GetPosition())
         model.modify();
     level->palette = event.GetPosition(); 
-    load_chr();
+    load_chr(true);
     Refresh();
 
 }
@@ -988,13 +1012,17 @@ void level_editor_t::model_refresh()
     object_editor->update_classes();
     object_editor->load_object();
 
-    load_chr();
+    load_chr(true);
 }
 
-void level_editor_t::load_chr()
+void level_editor_t::load_chr(bool remake)
 {
     if(auto* chr_file = lookup_name(level->chr_name, model.chr_files))
-        level->refresh_chr(chr_file->chr, model.palette_array(level->palette));
+    {
+        if(remake)
+            level->refresh_chr(model.chr_files, model.palette_array(level->palette));
+        level->chr_id = chr_file->id;
+    }
     else
         level->clear_chr();
     Refresh();
@@ -1002,22 +1030,25 @@ void level_editor_t::load_chr()
 
 void level_editor_t::on_chr_select(wxCommandEvent& event)
 {
+    bool const remake_chr = !lookup_name(level->chr_name, model.chr_files);
     int const index = event.GetSelection();
     if(index >= 0 && index < model.chr_files.size())
     {
         if(level->chr_name != model.chr_files[index].name)
             model.modify();
         level->chr_name = model.chr_files[index].name;
+        level->chr_id = model.chr_files[index].id;
     }
-    load_chr();
+    load_chr(remake_chr);
 }
 
 void level_editor_t::on_chr_text(wxCommandEvent& event)
 {
+    bool const remake_chr = !lookup_name(level->chr_name, model.chr_files);
     if(level->chr_name != chr_combo->GetValue())
         model.modify();
     level->chr_name = chr_combo->GetValue();
-    load_chr();
+    load_chr(remake_chr);
 }
 
 void level_editor_t::on_delete(wxCommandEvent& event)

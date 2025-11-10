@@ -2,6 +2,8 @@
 
 #include "lodepng/lodepng.h"
 
+#include "model.hpp"
+
 std::vector<std::uint8_t> read_binary_file(char const* filename)
 {
     FILE* fp = std::fopen(filename, "rb");
@@ -22,14 +24,29 @@ std::vector<std::uint8_t> read_binary_file(char const* filename)
     return data;
 }
 
-std::vector<attr_bitmaps_t> chr_to_bitmaps(std::uint8_t const* data, std::size_t size, std::uint8_t const* palette)
+std::vector<attr_bitmaps_t> chr_to_bitmaps(std::uint8_t const* data, std::size_t size, std::uint8_t const* palette, 
+                                           std::vector<std::uint16_t> const& indices)
 {
     std::vector<attr_bitmaps_t> ret;
 
     //size = std::min<std::size_t>(size, 16*256);
 
+    wxImage bad_image(bad_image_xpm);
+
     for(unsigned i = 0; i < size; i += 16)
     {
+        unsigned j = i / 16;
+        if(j >= indices.size() || (j != 0 && indices[j] == indices[j-1]))
+        {
+            ret.push_back({{
+                bad_image,
+                bad_image,
+                bad_image,
+                bad_image,
+            }});
+            continue;
+        }
+
         std::array<std::array<rgb_t, 8*8>, 4> rgb;
 
         std::uint8_t const* plane0 = data + i;
@@ -88,15 +105,54 @@ std::pair<std::vector<bitmap_t>, std::vector<wxBitmap>> load_collision_file(wxSt
     return ret;
 }
 
-static std::uint8_t map_grey_alpha(std::uint8_t grey, std::uint8_t alpha)
+static std::uint8_t map_grey_alpha(std::uint8_t grey, std::uint8_t alpha, std::uint8_t& transparent)
 {
-    return (grey * (alpha + 1)) >> (6 + 8);
+    transparent = alpha < 128;
+    return grey >> 6;
 }
 
-std::vector<std::uint8_t> png_to_chr(std::uint8_t const* png, std::size_t size, bool chr16)
+namespace
+{
+    class palette_map_t
+    {
+    public:
+        palette_map_t(unsigned char* palette, unsigned num_colors)
+        {
+            for(unsigned i = 0; i < num_colors; ++i) 
+            {
+                std::uint8_t const a = palette[4 * i + 3];
+                if(a >= 128)
+                    map.push_back(i);
+            }
+        }
+
+        std::uint8_t lookup(std::uint8_t palette) const 
+        { 
+            for(unsigned i = 0; i < map.size(); i += 1)
+                if(palette == map[i])
+                    return i;
+            return 0;
+        }
+
+        std::uint8_t is_alpha(std::uint8_t palette) const 
+        {
+            for(unsigned i = 0; i < map.size(); i += 1)
+                if(palette == map[i])
+                    return false;
+            return true;
+        }
+
+    private:
+        std::vector<std::uint8_t> map;
+    };
+}
+
+
+chr_patterns_t png_to_chr(std::uint8_t const* png, std::size_t size)
 {
     unsigned width, height;
     std::vector<std::uint8_t> image; //the raw pixels
+    std::vector<std::uint8_t> transparent;
     lodepng::State state;
     unsigned error;
 
@@ -105,19 +161,26 @@ std::vector<std::uint8_t> png_to_chr(std::uint8_t const* png, std::size_t size, 
 
     if(width % 8 != 0)
         throw std::runtime_error("Image width is not a multiple of 8.");
-    if(chr16 && height % 16 != 0)
-        throw std::runtime_error("Image height is not a multiple of 16.");
-    else if(!chr16 && height % 8 != 0)
+    else if(height % 8 != 0)
         throw std::runtime_error("Image height is not a multiple of 8.");
 
     switch(state.info_png.color.colortype)
     {
     case LCT_PALETTE:
-        state.info_raw.colortype = LCT_PALETTE;
-        if((error = lodepng::decode(image, width, height, state, png, size)))
-            goto fail;
-        for(std::uint8_t& c : image)
-            c &= 0b11;
+        {
+            state.info_raw.colortype = LCT_PALETTE;
+            if((error = lodepng::decode(image, width, height, state, png, size)))
+                goto fail;
+            LodePNGColorMode& color = state.info_png.color;
+            palette_map_t map(color.palette, color.palettesize);
+            unsigned const n = width * height;
+            transparent.resize(n);
+            for(unsigned i = 0; i < n; i += 1)
+            {
+                transparent[i] = map.is_alpha(image[i]);
+                image[i] = map.lookup(image[i]);
+            }
+        }
         break;
 
     case LCT_GREY:
@@ -125,6 +188,7 @@ std::vector<std::uint8_t> png_to_chr(std::uint8_t const* png, std::size_t size, 
         state.info_raw.colortype = LCT_GREY;
         if((error = lodepng::decode(image, width, height, state, png, size)))
             goto fail;
+        transparent.resize(width * height, 0);
         for(std::uint8_t& c : image)
             c >>= 6;
         break;
@@ -134,9 +198,10 @@ std::vector<std::uint8_t> png_to_chr(std::uint8_t const* png, std::size_t size, 
         if((error = lodepng::decode(image, width, height, state, png, size)))
             goto fail;
         assert(image.size() == width * height * 2);
-        unsigned const n = image.size() / 2;
+        unsigned const n = width * height;
+        transparent.resize(n);
         for(unsigned i = 0; i < n; ++i)
-            image[i] = map_grey_alpha(image[i*2], image[i*2 + 1]);
+            image[i] = map_grey_alpha(image[i*2], image[i*2 + 1], transparent[i]);
         image.resize(n);
         break;
     }
@@ -144,50 +209,49 @@ std::vector<std::uint8_t> png_to_chr(std::uint8_t const* png, std::size_t size, 
     // Now convert to CHR
     {
         std::vector<std::uint8_t> result;
-        result.resize(image.size() / 4);
+        result.reserve(image.size() / 4);
 
-        unsigned i = 0;
+        std::vector<std::uint16_t> indices;
+        indices.reserve(image.size() / 64);
+        std::uint16_t index = 0;
 
-        if(chr16)
+        for(unsigned ty = 0; ty < height; ty += 8)
+        for(unsigned tx = 0; tx < width; tx += 8, indices.push_back(index))
         {
-            for(unsigned ty = 0; ty < height; ty += 16)
-            for(unsigned tx = 0; tx < width; tx += 8)
+            bool any_transparent = false;
+            bool any_opaque = false;
+
+            for(unsigned y = 0; y < 8; ++y)
+            for(unsigned x = 0; x < 8; ++x)
             {
-                for(unsigned y = 0; y < 8; ++y, ++i)
-                for(unsigned x = 0; x < 8; ++x)
-                    result[i] |= (image[tx + x + (ty + y)*width] & 1) << (7-x);
-
-                for(unsigned y = 0; y < 8; ++y, ++i)
-                for(unsigned x = 0; x < 8; ++x)
-                    result[i] |= (image[tx + x + (ty + y)*width] >> 1) << (7-x);
-
-                for(unsigned y = 8; y < 16; ++y, ++i)
-                for(unsigned x = 0; x < 8; ++x)
-                    result[i] |= (image[tx + x + (ty + y)*width] & 1) << (7-x);
-
-                for(unsigned y = 8; y < 16; ++y, ++i)
-                for(unsigned x = 0; x < 8; ++x)
-                    result[i] |= (image[tx + x + (ty + y)*width] >> 1) << (7-x);
+                bool t = transparent[tx + x + (ty + y)*width];
+                any_transparent |= t;
+                any_opaque      |= !t;
             }
-        }
-        else
-        {
-            for(unsigned ty = 0; ty < height; ty += 8)
-            for(unsigned tx = 0; tx < width; tx += 8)
+
+            for(unsigned y = 0; y < 8; ++y)
             {
-                for(unsigned y = 0; y < 8; ++y, ++i)
+                std::uint8_t v = 0;
                 for(unsigned x = 0; x < 8; ++x)
-                    result[i] |= (image[tx + x + (ty + y)*width] & 1) << (7-x);
-
-                for(unsigned y = 0; y < 8; ++y, ++i)
-                for(unsigned x = 0; x < 8; ++x)
-                    result[i] |= (image[tx + x + (ty + y)*width] >> 1) << (7-x);
+                    v |= (image[tx + x + (ty + y)*width] & 1) << (7-x);
+                result.push_back(v);
             }
+
+            for(unsigned y = 0; y < 8; ++y)
+            {
+                std::uint8_t v = 0;
+                for(unsigned x = 0; x < 8; ++x)
+                    v |= (image[tx + x + (ty + y)*width] >> 1) << (7-x);
+                result.push_back(v);
+            }
+
+            if(any_transparent && !any_opaque)
+                continue;
+
+            index += 1;
         }
 
-        assert(i == result.size());
-
-        return result;
+        return { std::move(result), std::move(indices) };
     }
 fail:
     throw std::runtime_error(std::string("png decoder error: ") + lodepng_error_text(error));

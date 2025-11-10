@@ -307,7 +307,7 @@ void canvas_box_t::on_up(mouse_button_t mb, coord_t mouse_end)
         {
             model.modify();
 
-            if(auto* grid = std::get_if<grid_t<std::uint16_t>>(&model.paste->data))
+            if(auto* grid = std::get_if<grid_t<std::uint32_t>>(&model.paste->data))
                 editor().history.push(layer().save(rect_t{ pen, grid->dimen() }));
             layer().paste(*model.paste, pen);
             post_update();
@@ -326,7 +326,7 @@ void canvas_box_t::on_up(mouse_button_t mb, coord_t mouse_end)
     else if(model.tool == TOOL_STAMP && mb == MBTN_LEFT)
     {
         bool modify = false;
-        layer().for_each_picked(pen, [&](coord_t c, std::uint16_t tile)
+        layer().for_each_picked(pen, [&](coord_t c, std::uint32_t tile)
         { 
             modify |= (layer().get(c) != tile);
         });
@@ -337,7 +337,7 @@ void canvas_box_t::on_up(mouse_button_t mb, coord_t mouse_end)
 
         editor().history.push(layer().save(pen));
 
-        layer().for_each_picked(pen, [&](coord_t c, std::uint16_t tile)
+        layer().for_each_picked(pen, [&](coord_t c, std::uint32_t tile)
         { 
             layer().set(c, tile);
         });
@@ -410,14 +410,14 @@ void canvas_box_t::draw_overlays(render_t& gc)
 
     if(pasting())
     {
-        if(auto* grid = std::get_if<grid_t<std::uint16_t>>(&model.paste->data))
+        if(auto* grid = std::get_if<grid_t<std::uint32_t>>(&model.paste->data))
         {
             gc.SetPen(wxPen(wxColor(255, 255, 0), 0));
             gc.SetBrush(wxBrush(wxColor(255, 0, 255, 127)));
             coord_t const pen = from_screen(mouse_current);
             for(coord_t c : dimen_range(grid->dimen()))
             {
-                if((*grid)[c] != std::uint16_t(~0u))
+                if((*grid)[c] != std::uint32_t(~0u))
                 {
                     coord_t const c0 = to_screen(c + pen);
                     gc.DrawRectangle(c0.x, c0.y, tile_size().w, tile_size().h);

@@ -9,6 +9,7 @@
 #include <set>
 #include <filesystem>
 #include <vector>
+#include <unordered_map>
 
 #include "2d/geometry.hpp"
 #include "2d/grid.hpp"
@@ -25,10 +26,31 @@ struct object_t;
 class model_t;
 
 using palette_array_t = std::array<std::uint8_t, 16>;
-using chr_array_t = std::array<std::uint8_t, 16*256*32>;
+using chr_array_t = std::array<std::uint8_t, 16*256*4>;
 
 constexpr std::uint8_t ACTIVE_COLLISION = 4;
 static constexpr std::size_t UNDO_LIMIT = 256;
+
+inline unsigned chr_id(std::uint32_t tile) { return tile >> 16; }
+inline std::uint32_t with_chr_id(std::uint32_t tile, unsigned id) { return (tile & 0xFFFF) | (id << 16); }
+
+inline unsigned tile_tile(std::uint32_t tile) { return tile & 0x3FFF; }
+inline unsigned tile_attr(std::uint32_t tile) { return (tile >> 14) & 0b11; }
+
+constexpr char const* bad_image_xpm[] = {
+    "8 8 4 1",
+    " 	c #390000",
+    ".	c #003939",
+    "+	c #000039",
+    "@	c #390039",
+    "  ....++",
+    "   ..+++",
+    ".   +++.",
+    ".. @@+..",
+    "..+@@ ..",
+    ".+++   .",
+    "+++..   ",
+    "++....  "};
 
 struct object_t
 {
@@ -37,8 +59,8 @@ struct object_t
     std::string oclass;
     std::unordered_map<std::string, std::string> fields;
 
-    void append_vec(std::vector<std::uint16_t>& vec) const;
-    void from_vec(std::uint16_t const*& ptr, std::uint16_t const* end);
+    void append_vec(std::vector<std::uint32_t>& vec) const;
+    void from_vec(std::uint32_t const*& ptr, std::uint32_t const* end);
     auto operator<=>(object_t const&) const = default;
 };
 
@@ -48,7 +70,7 @@ struct undo_tiles_t
 {
     tile_layer_t* layer;
     rect_t rect;
-    std::vector<std::uint16_t> tiles;
+    std::vector<std::uint32_t> tiles;
 };
 
 struct undo_palette_num_t
@@ -59,7 +81,7 @@ struct undo_palette_num_t
 struct undo_level_dimen_t
 {
     class chr_layer_t* layer;
-    grid_t<std::uint16_t> tiles;
+    grid_t<std::uint32_t> tiles;
 };
 
 struct undo_new_object_t
@@ -148,21 +170,21 @@ enum
 struct tile_copy_t
 {
     unsigned format;
-    std::variant<grid_t<std::uint16_t>, std::vector<object_t>> data;
+    std::variant<grid_t<std::uint32_t>, std::vector<object_t>> data;
 
-    std::vector<std::uint16_t> to_vec() const
+    std::vector<std::uint32_t> to_vec() const
     {
-        if(auto* grid = std::get_if<grid_t<std::uint16_t>>(&data))
+        if(auto* grid = std::get_if<grid_t<std::uint32_t>>(&data))
         {
             assert(format != LAYER_OBJECTS);
-            std::vector<std::uint16_t> vec = { format, grid->dimen().w, grid->dimen().h };
+            std::vector<std::uint32_t> vec = { format, grid->dimen().w, grid->dimen().h };
             vec.insert(vec.end(), grid->begin(), grid->end());
             return vec;
         }
         else if(auto* objects = std::get_if<std::vector<object_t>>(&data))
         {
             assert(format == LAYER_OBJECTS);
-            std::vector<std::uint16_t> vec = { format, objects->size() };
+            std::vector<std::uint32_t> vec = { format, objects->size() };
             for(auto const& object : *objects)
                 object.append_vec(vec);
             return vec;
@@ -171,21 +193,21 @@ struct tile_copy_t
         throw std::runtime_error("Unable to convert clip data to vec.");
     }
 
-    static tile_copy_t from_vec(std::vector<std::uint16_t> const& vec)
+    static tile_copy_t from_vec(std::vector<std::uint32_t> const& vec)
     {
         tile_copy_t ret = { vec.at(0) };
         if(ret.format == LAYER_OBJECTS)
         {
             unsigned const size = vec.at(1);
             std::vector<object_t> objects;
-            std::uint16_t const* ptr = vec.data() + 2;
+            std::uint32_t const* ptr = vec.data() + 2;
             for(unsigned i = 0; i < size; ++i)
                 objects.emplace_back().from_vec(ptr, &*vec.end());
             ret.data = std::move(objects);
         }
         else
         {
-            grid_t<std::uint16_t> tiles;
+            grid_t<std::uint32_t> tiles;
             tiles.resize({ vec.at(1), vec.at(2) });
             unsigned i = 3;
             for(coord_t c : dimen_range(tiles.dimen()))
@@ -214,11 +236,11 @@ public:
     virtual dimen_t tile_size(model_t const& m) const { return { 8, 8 }; }
     virtual dimen_t canvas_dimen() const { return tiles.dimen(); }
     virtual void canvas_resize(dimen_t d) { canvas_selector.resize(d); tiles.resize(d); }
-    virtual std::uint16_t get(coord_t c) const { return tiles.at(c); }
-    virtual void set(coord_t c, std::uint16_t value) { tiles.at(c) = value; }
+    virtual std::uint32_t get(coord_t c) const { return tiles.at(c); }
+    virtual void set(coord_t c, std::uint32_t value) { tiles.at(c) = value; }
     virtual void reset(coord_t c) { set(c, 0); }
-    virtual std::uint16_t to_tile(coord_t pick) const { return pick.x + pick.y * picker_selector.dimen().w; }
-    virtual coord_t to_pick(std::uint16_t tile) const { return { tile % picker_selector.dimen().w, tile / picker_selector.dimen().w }; }
+    virtual std::uint32_t to_tile(coord_t pick) const { return pick.x + pick.y * picker_selector.dimen().w; }
+    virtual coord_t to_pick(std::uint32_t tile) const { return { tile % picker_selector.dimen().w, tile / picker_selector.dimen().w }; }
 
     virtual tile_copy_t copy(undo_t* cut = nullptr);
     virtual void paste(tile_copy_t const& copy, coord_t at);
@@ -237,7 +259,7 @@ public:
         rect_t const select_rect = picker_selector.select_rect();
         picker_selector.for_each_selected([&](coord_t c)
         {
-            std::uint16_t const tile = to_tile(c);
+            std::uint32_t const tile = to_tile(c);
             coord_t const at = pen_c + c - select_rect.c;
             if(in_bounds(at, canvas_dimen()))
                 fn(at, tile);
@@ -246,7 +268,7 @@ public:
 
     select_map_t picker_selector;
     select_map_t canvas_selector;
-    grid_t<std::uint16_t> tiles;
+    grid_t<std::uint32_t> tiles;
 };
 
 class tile_model_t
@@ -262,9 +284,11 @@ public:
 
 struct chr_file_t
 {
+    unsigned id;
     std::string name;
     std::filesystem::path path;
     chr_array_t chr = {};
+    std::vector<std::uint16_t> indices;
 
     void load();
 };
@@ -276,7 +300,7 @@ struct chr_file_t
 class color_layer_t : public tile_layer_t
 {
 public:
-    explicit color_layer_t(std::uint16_t& num) 
+    explicit color_layer_t(std::uint32_t& num) 
     : tile_layer_t({ 4, 16 }, { 25, 256 }) 
     , num(num)
     { 
@@ -305,10 +329,10 @@ public:
     virtual dimen_t tile_size(model_t const& m) const override { return { 16, 16 }; }
     virtual dimen_t canvas_dimen() const override { return { tiles.dimen().w, num }; }
     virtual void reset(coord_t c) override { set(c, 0x0F); }
-    virtual std::uint16_t to_tile(coord_t pick) const override { return pick.y + pick.x * picker_selector.dimen().h; }
-    virtual coord_t to_pick(std::uint16_t tile) const override { return { tile / picker_selector.dimen().h, tile % picker_selector.dimen().h }; }
+    virtual std::uint32_t to_tile(coord_t pick) const override { return pick.y + pick.x * picker_selector.dimen().h; }
+    virtual coord_t to_pick(std::uint32_t tile) const override { return { tile / picker_selector.dimen().h, tile % picker_selector.dimen().h }; }
 
-    std::uint16_t const& num;
+    std::uint32_t const& num;
 };
 
 class palette_model_t : public tile_model_t
@@ -316,7 +340,7 @@ class palette_model_t : public tile_model_t
 public:
     virtual tile_layer_t& layer() override { return color_layer; }
 
-    std::uint16_t num = 1;
+    std::uint32_t num = 1;
     color_layer_t color_layer = color_layer_t(this->num);
 };
 
@@ -336,18 +360,20 @@ public:
 class chr_layer_t : public tile_layer_t
 {
 public:
-    explicit chr_layer_t(std::uint8_t const& active) 
-    : tile_layer_t({ 16, 16*32 }, { 16*3, 16*3 })
+    explicit chr_layer_t(unsigned& chr_id, std::uint8_t const& active) 
+    : tile_layer_t({ 16, 16*4 }, { 16*3, 16*3 })
+    , chr_id(chr_id)
     , active(active)
     {}
 
     virtual unsigned format() const override { return LAYER_CHR; }
     virtual void reset(coord_t c) { tiles.at(c) = 0; }
-    virtual std::uint16_t to_tile(coord_t pick) const { return tile_layer_t::to_tile(pick) | (active << 14); }
-    virtual coord_t to_pick(std::uint16_t tile) const override { tile &= 0x3FFF; return { tile % picker_selector.dimen().w, tile / picker_selector.dimen().w }; }
-
+    virtual std::uint32_t to_tile(coord_t pick) const { return tile_layer_t::to_tile(pick) | ((active & 0b11) << 14) | (chr_id << 16); }
+    virtual coord_t to_pick(std::uint32_t tile) const override { tile &= 0x3FFF; return { tile % picker_selector.dimen().w, tile / picker_selector.dimen().w }; }
+    virtual void dropper(coord_t at) override;
     undo_t fill_attribute();
 
+    unsigned& chr_id;
     std::uint8_t const& active;
 
     undo_t save() { return undo_level_dimen_t{ this, tiles }; }
@@ -380,7 +406,12 @@ enum level_layer_t
 class level_model_t : public tile_model_t
 {
 public:
-    level_model_t() { resize({ 32, 30 }, { 32, 30 }); }
+    level_model_t() 
+    : bad_chr(bad_image_xpm)
+    { 
+        resize({ 24, 24 }, { 24, 24 }); 
+    }
+
     bool collisions() const { return current_layer == COLLISION_LAYER; }
     virtual tile_layer_t& layer() override { if(collisions()) return collision_layer; else return chr_layer; }
     dimen_t dimen() const { return chr_layer.tiles.dimen(); }
@@ -393,7 +424,7 @@ public:
     }
 
     void clear_chr();
-    void refresh_chr(chr_array_t const& chr, palette_array_t const& palette);
+    void refresh_chr(std::deque<chr_file_t> const& chr_deque, palette_array_t const& palette);
 
     unsigned count_mt(unsigned metatile_size, unsigned select = 0);
 
@@ -402,15 +433,19 @@ public:
     std::string name = "level";
     std::string macro_name;
     std::string chr_name;
+    unsigned chr_id = 0;
     std::uint8_t palette = 0;
-    chr_layer_t chr_layer = chr_layer_t(this->active);
+    chr_layer_t chr_layer = chr_layer_t(this->chr_id, this->active);
     collision_layer_t collision_layer;
-    std::vector<attr_gc_bitmaps_t> chr_bitmaps;
+    std::vector<unsigned> chr_ids;
+    std::unordered_map<unsigned, std::vector<attr_gc_bitmaps_t>> chr_bitmaps;
     level_layer_t current_layer = ATTR0_LAYER;
     std::uint8_t active = 0;
 
     std::set<int> object_selector;
     std::deque<object_t> objects;
+
+    wxImage bad_chr;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -421,10 +456,11 @@ struct model_t
 {
     model_t()
     {
-        chr_files.push_back({ "chr" });
+        chr_files.push_back({ 0, "chr" });
         object_classes.push_back(std::make_shared<object_class_t>("object"));
         auto& level = levels.emplace_back(std::make_shared<level_model_t>());
         level->chr_name = "chr";
+
     }
 
     bool modified = false;

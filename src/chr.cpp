@@ -1,5 +1,7 @@
 #include "chr.hpp"
 
+#include <wx/numdlg.h>
+
 #include "convert.hpp"
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -14,11 +16,17 @@ file_def_t::file_def_t(wxWindow* parent, model_t const& model, chr_file_t const&
 {
     wxBoxSizer* row_sizer = new wxBoxSizer(wxHORIZONTAL);
 
-    wxStaticText* name_label = new wxStaticText(this, wxID_ANY, "CHR Name:", wxDefaultPosition, wxDefaultSize, wxALIGN_RIGHT);
+    wxStaticText* name_label = new wxStaticText(this, wxID_ANY, "Name:", wxDefaultPosition, wxDefaultSize, wxALIGN_RIGHT);
     name_entry = new wxTextCtrl(this, wxID_ANY, file.name);
     name_entry->SetMinSize(wxSize(150, 24));
     name_entry->SetMaxSize(wxSize(300, 24));
     name_entry->SetWindowStyleFlag(wxTE_READONLY);
+
+    wxStaticText* id_label = new wxStaticText(this, wxID_ANY, "Id:", wxDefaultPosition, wxDefaultSize, wxALIGN_RIGHT);
+    id_entry = new wxTextCtrl(this, wxID_ANY, std::to_string(file.id));
+    id_entry->SetMinSize(wxSize(80, 24));
+    id_entry->SetMaxSize(wxSize(100, 24));
+    id_entry->SetWindowStyleFlag(wxTE_READONLY);
 
     wxStaticText* path_label = new wxStaticText(this, wxID_ANY, "Path:", wxDefaultPosition, wxDefaultSize, wxALIGN_LEFT);
 
@@ -29,12 +37,16 @@ file_def_t::file_def_t(wxWindow* parent, model_t const& model, chr_file_t const&
     filename->SetMaxSize(wxSize(300, 24));
 
     wxButton* rename_button = new wxButton(this, wxID_ANY, "Rename");
+    wxButton* reid_button = new wxButton(this, wxID_ANY, "Set Id");
     wxButton* open_button = new wxButton(this, wxID_ANY, "Set Path");
     wxButton* delete_button = new wxButton(this, wxID_ANY, "Delete");
 
     row_sizer->Add(name_label, wxSizerFlags().Left().Border().Center());
     row_sizer->Add(name_entry, wxSizerFlags().Left().Border().Center());
     row_sizer->Add(rename_button, wxSizerFlags().Left().Border().Center());
+    row_sizer->Add(id_label, wxSizerFlags().Left().Border().Center());
+    row_sizer->Add(id_entry, wxSizerFlags().Left().Border().Center());
+    row_sizer->Add(reid_button, wxSizerFlags().Left().Border().Center());
     row_sizer->AddSpacer(16);
     row_sizer->Add(path_label, wxSizerFlags().Left().Border().Center());
     row_sizer->AddSpacer(16);
@@ -44,9 +56,9 @@ file_def_t::file_def_t(wxWindow* parent, model_t const& model, chr_file_t const&
     row_sizer->Add(delete_button, wxSizerFlags().Left().Border().Center());
 
     rename_button->Bind(wxEVT_COMMAND_BUTTON_CLICKED, &file_def_t::on_rename, this);
+    reid_button->Bind(wxEVT_COMMAND_BUTTON_CLICKED, &file_def_t::on_reid, this);
     delete_button->Bind(wxEVT_COMMAND_BUTTON_CLICKED, &file_def_t::on_delete, this);
     open_button->Bind(wxEVT_COMMAND_BUTTON_CLICKED, &file_def_t::on_open, this);
-    //name_entry->Bind(wxEVT_TEXT, &file_def_t::on_name, this);
 
     SetSizerAndFit(row_sizer);
 }
@@ -89,7 +101,18 @@ void file_def_t::on_rename(wxCommandEvent& event)
         static_cast<chr_editor_t*>(GetParent())->on_rename(index, new_name); 
         name_entry->SetValue(file.name);
     }
+}
 
+void file_def_t::on_reid(wxCommandEvent& event)
+{
+    wxNumberEntryDialog dialog(this, "Each tile in the level will be associated with a CHR id.", "Id:", "Id", file.id, 0, 0xFFFF);
+
+    if(dialog.ShowModal() == wxID_OK)
+    {
+        unsigned const new_id = dialog.GetValue();
+        static_cast<chr_editor_t*>(GetParent())->on_reid(index, new_id); 
+        id_entry->SetValue(std::to_string(file.id));
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -225,8 +248,21 @@ void chr_editor_t::on_new(wxCommandEvent& event)
             }
         }
 
+        unsigned id = 0;
+        for(unsigned i = 0; i < model.chr_files.size();)
+        {
+            if(id == model.chr_files[i].id)
+            {
+                id += 1;
+                i = 0;
+            }
+            else
+                ++i;
+        }
+
         auto& file = model.chr_files.emplace_back();
         file.name = new_name;
+        file.id = id;
         new_file(file);
         FitInside();
         model.modify();
@@ -250,6 +286,28 @@ void chr_editor_t::on_rename(unsigned index, std::string str)
     for(auto& level : model.levels)
         if(level->chr_name == old_name)
             level->chr_name = str;
+
+    model.modify();
+}
+
+void chr_editor_t::on_reid(unsigned index, unsigned new_id)
+{
+    for(unsigned i = 0; i < model.chr_files.size(); ++i)
+    {
+        if(i != index && model.chr_files[i].id == new_id)
+        {
+            wxMessageBox( wxT("Ids must be unique."), wxT("Error"), wxICON_ERROR);
+            return;
+        }
+    }
+
+    unsigned const old_id = model.chr_files[index].id;
+    model.chr_files[index].id = new_id;
+
+    for(auto& level : model.levels)
+        for(std::uint32_t& t : level->chr_layer.tiles)
+            if(chr_id(t) == old_id)
+                t = with_chr_id(t, new_id);
 
     model.modify();
 }

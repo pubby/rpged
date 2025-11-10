@@ -334,7 +334,7 @@ protected:
 
     virtual void post_update() {}
 
-    virtual void on_dropper(std::uint16_t) {}
+    virtual void on_dropper(std::uint32_t) {}
     virtual void on_down(mouse_button_t mb, coord_t at) override;
     virtual void on_up(mouse_button_t mb, coord_t mouse_end) override;
     virtual void on_motion(coord_t at) override;
@@ -426,6 +426,7 @@ public:
         for(auto const& object : collection())
         {
             notebook->AddPage(new page_type(notebook, model, object), object->name);
+            P::on_page_changing(page(count), this->object(count));
             if(++count >= 10)
                 break;
         }

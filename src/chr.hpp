@@ -28,13 +28,16 @@ public:
     void on_open(wxCommandEvent& event);
     void on_delete(wxCommandEvent& event);
     void on_rename(wxCommandEvent& event);
+    void on_reid(wxCommandEvent& event);
 
     unsigned index = 0;
+    unsigned id = 0;
 private:
     model_t const& model;
     chr_file_t const& file;
     wxTextCtrl* filename;
     wxTextCtrl* name_entry;
+    wxTextCtrl* id_entry;
 };
 
 class chr_editor_t : public wxScrolledWindow
@@ -45,6 +48,7 @@ public:
     void on_delete(unsigned index);
     void on_new(wxCommandEvent& event);
     void on_rename(unsigned index, std::string str);
+    void on_reid(unsigned index, unsigned new_id);
     void on_open(unsigned index, std::string path);
     void on_open_collision(wxCommandEvent& event);
     void on_change_scale(wxSpinEvent& event);
